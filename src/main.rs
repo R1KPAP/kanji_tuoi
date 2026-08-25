@@ -1,8 +1,27 @@
 use std::io;
-use ratatui::{DefaultTerminal, Frame, 
-    layout::{Layout, Constraint, Spacing}, 
-    widgets::{Paragraph, Borders, Block}
+use ratatui::{
+        DefaultTerminal,
+        Frame,
+        symbols::Marker,
+        layout::{
+            Layout,
+            Constraint,
+            Spacing}, 
+        widgets::{
+            canvas::{
+                Canvas,
+                Line},
+            Paragraph,
+            Borders,
+            Block
+        },
+        style::{
+            Color,
+            Style,
+        },
 };
+
+mod model;
 
 /// App entry point
 fn main() -> io::Result<()> {
@@ -10,18 +29,48 @@ fn main() -> io::Result<()> {
 }
 
 /// Main loop, to redraw the UI
-pub fn app(terminal: &mut DefaultTerminal) -> io::Result<()> {
+fn app(terminal: &mut DefaultTerminal) -> io::Result<()> {
     loop {
-        terminal.draw(render)?;
+        terminal.draw(test_canvas)?;
         if crossterm::event::read()?.is_key_press() {
             break Ok(());
         }
     }
 }
 
-/// Renders the UI
-fn render(frame: &mut Frame) {
+fn test_canvas(frame: &mut Frame) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("")
+        .title_style(Style::default().fg(Color::Yellow));
 
+    let canvas = Canvas::default()
+        .block(block)
+        .x_bounds([0.0, 109.0])
+        .y_bounds([0.0, 109.0])
+        .marker(Marker::Braille)
+        .paint(|ctx| {
+            ctx.draw(&Line {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: 50.0,
+                    y2: 0.0,
+                    color: Color::Red,
+                });
+                ctx.draw(&Line {
+                    x1: 0.0,
+                    y1: 0.5,
+                    x2: 50.0,
+                    y2: 0.5,
+                    color: Color::Red,
+                });
+        });
+
+    frame.render_widget(canvas, frame.area());
+}
+
+/// Renders the UI
+fn render_ui(frame: &mut Frame) {
     let [left, right] = Layout::horizontal([
         Constraint::Percentage(80),
         Constraint::Percentage(20),
@@ -59,7 +108,7 @@ fn render(frame: &mut Frame) {
         .block(Block::new().borders(Borders::ALL)), on_yomi);
     frame.render_widget(Paragraph::new("kun_yomi")
         .block(Block::new().borders(Borders::ALL)), kun_yomi);
-    frame.render_widget(Paragraph::new("kun_yomi")
+    frame.render_widget(Paragraph::new("nanori")
         .block(Block::new().borders(Borders::ALL)), nanori);
     frame.render_widget(Paragraph::new("meaning")
         .block(Block::new().borders(Borders::ALL)), meaning);
