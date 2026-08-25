@@ -22,6 +22,7 @@ use ratatui::{
 };
 
 mod model;
+mod repo;
 
 /// App entry point
 fn main() -> io::Result<()> {

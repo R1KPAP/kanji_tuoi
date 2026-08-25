@@ -49,7 +49,7 @@ fn main() {
     let krad_data = parse_krad_data("assets/kradfile").unwrap();
     let radk_data = build_reverse_krad_map(&krad_data);
     enrich_dataset(&mut full_dataset, &radk_data, &krad_data, &kanji_to_freq);
-    save_dataset_as_json(&full_dataset, "data/full_dataset.json").unwrap();
+    //save_dataset_as_json(&full_dataset, "data/full_dataset.json").unwrap();
     save_dataset_as_binary(&full_dataset, "data/kanji_dataset.bin").unwrap();
 }
 
@@ -313,7 +313,6 @@ pub fn extract_kanji_svg(
                 stroke_num += 1;
             }
     }
-
     Ok(result)
 }
 
@@ -349,27 +348,25 @@ fn save_dataset_as_binary(dataset: &[KanjiData], path: &str) -> Result<()> {
     Ok(())
 }
 
-fn save_dataset_as_json(dataset: &[KanjiData], path: &str) -> Result<()> {
-    println!("Saving the full data set...");
-    let out_file = std::fs::File::create(path)
-        .context("Impossible to create the output file")?;
-    let writer = BufWriter::new(out_file);
-    
-    serde_json::to_writer_pretty(writer, &dataset)
-        .context("Error while serializing data set to JSON")?;
-
-    println!("JSON data set saved successfully");
-    Ok(())
-}
-
 fn build_reverse_krad_map(krad_data: &HashMap<char, Vec<char>>) -> HashMap<char, Vec<char>> {
     let mut reverse_map: HashMap<char, Vec<char>> = HashMap::new();
-    
     for (&kanji, components) in krad_data {
         for &comp in components {
             reverse_map.entry(comp).or_default().push(kanji);
         }
     }
-    
     reverse_map
 }
+
+// fn save_dataset_as_json(dataset: &[KanjiData], path: &str) -> Result<()> {
+//     println!("Saving the full data set...");
+//     let out_file = std::fs::File::create(path)
+//         .context("Impossible to create the output file")?;
+//     let writer = BufWriter::new(out_file);
+    
+//     serde_json::to_writer_pretty(writer, &dataset)
+//         .context("Error while serializing data set to JSON")?;
+
+//     println!("JSON data set saved successfully");
+//     Ok(())
+// }

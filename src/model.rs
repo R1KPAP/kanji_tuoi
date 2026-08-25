@@ -23,6 +23,21 @@ pub struct KanjiData {
     #[serde(default)]
     pub used_in: Vec<char>,
 }
+
+impl KanjiData {
+    pub fn matches_text(&self, query: Option<&str>) -> bool {
+        let Some(q) = query.filter(|s| !s.is_empty())
+        else {
+            return true;
+        };
+        self.meanings.iter().any(|m| m.contains(q))
+        || self.romaji.iter().any(|r| r.contains(q))
+        || self.onyomi.iter().any(|r| r.contains(q))
+        || self.kunyomi.iter().any(|r| r.contains(q))
+        || self.nanori.iter().any(|r| r.contains(q))
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KanjiStrokes     {
     pub strokes: Vec<MyPoint>,
