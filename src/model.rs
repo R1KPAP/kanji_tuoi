@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct KanjiData {
     pub kanji: char,
-    pub name: Option<String>,
+    pub names: Vec<String>,
     pub jlpt_level: Option<u8>,
     pub freq_rank: Option<u16>,
     pub grade: Option<u8>,
@@ -26,20 +26,38 @@ pub struct KanjiData {
 
 impl KanjiData {
     pub fn matches_text(&self, query: Option<&str>) -> bool {
-        let Some(q) = query.filter(|s| !s.is_empty())
-        else {
-            return true;
-        };
-        self.meanings.iter().any(|m| m.contains(q))
-        || self.romaji.iter().any(|r| r.contains(q))
-        || self.onyomi.iter().any(|r| r.contains(q))
-        || self.kunyomi.iter().any(|r| r.contains(q))
-        || self.nanori.iter().any(|r| r.contains(q))
+    let Some(q) = query.filter(|s| !s.trim().is_empty()) else {
+        return true;
+    };
+
+    let tokens: Vec<String> = q.to_lowercase().split_whitespace().map(String::from).collect();
+
+    tokens.iter().all(|token| {
+        self.meanings.iter().any(|m| {
+            m.to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word.starts_with(token))
+        })
+        || self.romaji.iter().any(|r| r.to_lowercase().contains(token))
+        || self.onyomi.iter().any(|r| r.contains(token))
+        || self.kunyomi.iter().any(|r| r.contains(token))
+        || self.nanori.iter().any(|r| r.contains(token))
+    })
+}
+
+    pub fn grade_detail(&self)
+    -> String {
+        match self.grade {
+            Some(g @ 1..=6) => format!("Kyōiku (Grade {g})"),
+            Some(8) => "Jōyō (Secondary)".to_string(),
+            Some(9 | 10) => "Jinmeiyō (Name)".to_string(),
+            _ => "Hyōgai (Extra)".to_string(),
+        }
     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct KanjiStrokes     {
+pub struct KanjiStrokes {
     pub strokes: Vec<MyPoint>,
     pub order: u8,
 }
@@ -51,7 +69,8 @@ pub struct MyPoint {
 }
 
 impl MyPoint {
-    pub fn from_xy(x: f32, y: f32) -> Self {
+    pub fn from_xy(x: f32, y: f32)
+    -> Self {
         MyPoint { x, y }
     }
 }
