@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use encoding_rs::EUC_JP;
 use kanji_tui::model::{KanjiData, KanjiStrokes, MyPoint};
 use lyon_geom::cubic_bezier::CubicBezierSegment;
@@ -33,12 +33,19 @@ enum NextXMLTag<'a> {
 }
 #[derive(Deserialize)]
 struct KanjiInfo {
-    name: String,
-    variants: Option<Vec<char>>,
+    radical_name: Option<String>,
+    radical_variants: Option<Vec<char>>,
+    freq_mainichi_shinbun: Option<u16>,
+    jlpt: Option<u8>,
+    grade: Option<u8>,
+    meanings: Option<Vec<String>>,
+    name_readings: Option<Vec<String>>,
+    kun_readings: Option<Vec<String>>,
+    on_readings: Option<Vec<String>>,
 }
 
 fn main() {
-    let kanji_info = load_radicals_dataset("assets/radicals.json").unwrap();
+    let kanji_info = load_radicals_dataset("assets/kanji.json").unwrap();
     let (mut full_dataset, kanji_to_freq) =
         parse_kanjidic2_xml_data("assets/full_kanji_dic2.xml", &kanji_info).unwrap();
     let krad_data = parse_krad_data("assets/kradfile").unwrap();
@@ -141,10 +148,10 @@ fn parse_kanjidic2_xml_data(
                         let radical_info = radicals.get(&kanji.kanji);
 
                         let variants = radical_info
-                            .and_then(|info| info.variants.as_deref())
+                            .and_then(|info| info.radical_variants.as_deref())
                             .unwrap_or(&[]);
                         let rad_name = radical_info
-                            .map(|info| info.name.clone())
+                            .map(|info| info.radical_name.clone().unwrap_or("".to_string()))
                             .unwrap_or("".to_string());
 
                         let mut kanji_names = Vec::with_capacity(1 + variants.len());
@@ -171,12 +178,13 @@ fn parse_kanjidic2_xml_data(
 /// Parse krad file
 fn parse_krad_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
     let bytes = fs::read(path).context("Error opening krad file")?;
+
     let (cow_str, _encoding_used, had_errors) = EUC_JP.decode(&bytes);
     if had_errors {
         anyhow::bail!("Error while krad file EUC-JP decode");
     }
-    let mut krad_map = HashMap::new();
 
+    let mut krad_map = HashMap::new();
     for line in cow_str.lines() {
         let line = line.trim();
 
@@ -184,16 +192,19 @@ fn parse_krad_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
             continue;
         }
 
-        if let Some((kanji, radicals)) = line.split_once(':') {
-            let kanji_key: char = kanji.chars().next().unwrap_or_default();
-            let radical_list: Vec<char> = radicals
-                .split_whitespace()
-                .filter_map(|s| s.chars().next())
-                .collect();
+        if let Some((kanji_part, radicals_part)) = line.split_once(':') {
+            if let Some(raw_kanji) = kanji_part.trim().chars().next() {
+                let radical_list: Vec<char> = radicals_part
+                    .split_whitespace()
+                    .filter_map(|s| s.chars().next().map(normalize_krad_component))
+                    .collect();
 
-            krad_map.insert(kanji_key, radical_list);
+                let kanji_key = normalize_krad_component(raw_kanji);
+                krad_map.insert(kanji_key, radical_list);
+            }
         }
     }
+
     Ok(krad_map)
 }
 
@@ -243,35 +254,26 @@ fn enrich_dataset(
     kanji_to_freq: &HashMap<char, u16>,
     kanji_info: &HashMap<char, KanjiInfo>,
 ) {
-    let dataset_kanji: HashSet<char> = data_set
-        .iter()
-        .flat_map(|k| {
-            let mut variants = k.variants.clone();
-            variants.push(k.kanji);
-            variants
-        })
-        .collect();
-
-    let not_found: Vec<char> = kanji_info
-        .keys()
-        .filter(|&k| !dataset_kanji.contains(k))
-        .copied()
-        .collect();
-
-    let decomposition = not_found
-        .iter()
-        .map(|c| c.to_string())
-        .collect::<Vec<_>>()
-        .join(" + ");
-    println!("notFound: {}", decomposition);
-
-    let info_matches = AtomicUsize::new(0);
     data_set.par_iter_mut().for_each(|kanji_data| {
-        if let Some(kanji_info) = kanji_info.get(&kanji_data.kanji) {
-            info_matches.fetch_add(1, Ordering::Relaxed);
-            kanji_data.names = vec![kanji_info.name.clone()];
-            kanji_data.variants = kanji_info.variants.clone().unwrap_or_default();
+        if let Some(info) = kanji_info.get(&kanji_data.kanji) {
+            kanji_data.names = vec![info.radical_name.clone().unwrap_or_default()];
+            kanji_data.variants = info.radical_variants.clone().unwrap_or_default();
+            kanji_data.jlpt_level = info.jlpt;
+            kanji_data.grade = info.grade;
+
+            let update_if_richer = |target: &mut Vec<String>, source: Option<&Vec<String>>| {
+                if let Some(src) = source {
+                    if target.len() < src.len() {
+                        *target = src.clone();
+                    }
+                }
+            };
+
+            update_if_richer(&mut kanji_data.nanori, info.name_readings.as_ref());
+            update_if_richer(&mut kanji_data.kunyomi, info.kun_readings.as_ref());
+            update_if_richer(&mut kanji_data.onyomi, info.on_readings.as_ref());
         }
+
         kanji_data.decomposition = krad_data
             .get(&kanji_data.kanji)
             .cloned()
@@ -291,10 +293,6 @@ fn enrich_dataset(
             kanji_data.strokes = kanji_strokes;
         }
     });
-    println!(
-        "Elementi trovati in kanji_info: {}",
-        info_matches.load(Ordering::Relaxed)
-    );
 }
 
 pub fn extract_kanji_svg(
@@ -303,8 +301,7 @@ pub fn extract_kanji_svg(
     tolerance: f32,
 ) -> Result<Vec<KanjiStrokes>> {
     let opt = Options::default();
-    let svg_path = Path::new(svg_dir_path)
-        .join(format!("{:05x}.svg", *kanji_name as u32));
+    let svg_path = Path::new(svg_dir_path).join(format!("{:05x}.svg", *kanji_name as u32));
 
     let svg_content = fs::read_to_string(&svg_path)
         .with_context(|| format!("Impossibile to open the SVG file: {:?}", svg_path))?;
@@ -410,4 +407,28 @@ fn save_dataset_as_json(dataset: &[KanjiData], path: &str) -> Result<()> {
 
     println!("JSON data set saved successfully");
     Ok(())
+}
+
+pub fn normalize_krad_component(c: char) -> char {
+    match c {
+        '｜' => '丨', // U+FF5C -> U+4E28
+        '◯' => '〇',  // U+25CB -> U+3007
+
+        'ノ' => '丿',        // U+30CE -> U+4E3F
+        'ト' => '卜',        // U+30C8 -> U+535C
+        'ロ' => '口',        // U+30ED -> U+53E3
+        'ニ' => '二',        // U+30CB -> U+4E8C
+        'ハ' => '八',        // U+30CF -> U+516B
+        'ユ' | 'ヨ' => '彐', // U+30E5 / U+30CB -> U+5F50
+
+        '⺡' => '氵',        // U+2EA1 -> U+6C35
+        '⺘' => '扌',        // U+2E98 -> U+624B
+        '⺨' => '犭',        // U+2EA8 -> U+72AD
+        '⺾' => '艹',        // U+2EBE -> U+827A
+        '⻌' | '⻍' => '辶', // U+2EC1 / U+2ECD -> U+8FA2
+        '⻏' => '阝',        // U+2ECF -> U+961C
+        '⺤' => '爫',        // U+2EA4 -> U+722A
+
+        other => other,
+    }
 }
