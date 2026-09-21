@@ -7,9 +7,8 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use rayon::prelude::*;
 use serde::Deserialize;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::{self, File},
     io::{BufReader, BufWriter},
     path::Path,
@@ -45,7 +44,7 @@ struct KanjiInfo {
 }
 
 fn main() {
-    let kanji_info = load_radicals_dataset("assets/kanji.json").unwrap();
+    let kanji_info = load_kanji_dataset("assets/kanji.json").unwrap();
     let (mut full_dataset, kanji_to_freq) =
         parse_kanjidic2_xml_data("assets/full_kanji_dic2.xml", &kanji_info).unwrap();
     let krad_data = parse_krad_data("assets/kradfile").unwrap();
@@ -176,7 +175,8 @@ fn parse_kanjidic2_xml_data(
 }
 
 /// Parse krad file
-fn parse_krad_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
+fn parse_krad_data(path: &str)
+-> Result<HashMap<char, Vec<char>>> {
     let bytes = fs::read(path).context("Error opening krad file")?;
 
     let (cow_str, _encoding_used, had_errors) = EUC_JP.decode(&bytes);
@@ -209,7 +209,8 @@ fn parse_krad_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
 }
 
 /// Parse radk file
-pub fn parse_radk_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
+pub fn parse_radk_data(path: &str)
+-> Result<HashMap<char, Vec<char>>> {
     let bytes = fs::read(path).context("Error opening radk file")?;
 
     let (cow_str, _encoding, had_errors) = EUC_JP.decode(&bytes);
@@ -247,6 +248,7 @@ pub fn parse_radk_data(path: &str) -> Result<HashMap<char, Vec<char>>> {
     Ok(radk_map)
 }
 
+//Add missing data and merge datasets
 fn enrich_dataset(
     data_set: &mut Vec<KanjiData>,
     radk_data: &HashMap<char, Vec<char>>,
@@ -260,6 +262,7 @@ fn enrich_dataset(
             kanji_data.variants = info.radical_variants.clone().unwrap_or_default();
             kanji_data.jlpt_level = info.jlpt;
             kanji_data.grade = info.grade;
+            kanji_data.freq_rank = info.freq_mainichi_shinbun;
 
             let update_if_richer = |target: &mut Vec<String>, source: Option<&Vec<String>>| {
                 if let Some(src) = source {
@@ -272,6 +275,7 @@ fn enrich_dataset(
             update_if_richer(&mut kanji_data.nanori, info.name_readings.as_ref());
             update_if_richer(&mut kanji_data.kunyomi, info.kun_readings.as_ref());
             update_if_richer(&mut kanji_data.onyomi, info.on_readings.as_ref());
+            update_if_richer(&mut kanji_data.meanings, info.meanings.as_ref());
         }
 
         kanji_data.decomposition = krad_data
@@ -295,6 +299,7 @@ fn enrich_dataset(
     });
 }
 
+//Extract coords for kanji strokes animation
 pub fn extract_kanji_svg(
     svg_dir_path: &str,
     kanji_name: &char,
@@ -305,13 +310,9 @@ pub fn extract_kanji_svg(
 
     let svg_content = fs::read_to_string(&svg_path)
         .with_context(|| format!("Impossibile to open the SVG file: {:?}", svg_path))?;
-
     let cleaned_svg = svg_content.replace("kvg:", "kvg_");
-
     let tree = Tree::from_str(&cleaned_svg, &opt).context("Error while parsing the SVG file")?;
-
     let mut result: Vec<KanjiStrokes> = Vec::new();
-
     let mut paths = Vec::new();
     collect_paths(tree.root(), &mut paths);
 
@@ -357,7 +358,8 @@ pub fn extract_kanji_svg(
     Ok(result)
 }
 
-fn load_radicals_dataset(path: &str) -> Result<HashMap<char, KanjiInfo>> {
+//Load the json file to retrive and insert missing info into the dataset
+fn load_kanji_dataset(path: &str) -> Result<HashMap<char, KanjiInfo>> {
     let file =
         File::open(path).with_context(|| format!("Error opening radicals file: {}", path))?;
     let reader = BufReader::new(file);
@@ -376,6 +378,7 @@ fn collect_paths<'a>(group: &'a Group, paths: &mut Vec<&'a UsvgPath>) {
     }
 }
 
+//Crete the binary file out of the final dataset, the file is used for the TUI app (in memory)
 fn save_dataset_as_binary(dataset: &[KanjiData], path: &str) -> Result<()> {
     let file = File::create(path)
         .with_context(|| format!("Impossibile to create the binary file: {}", path))?;
@@ -387,6 +390,7 @@ fn save_dataset_as_binary(dataset: &[KanjiData], path: &str) -> Result<()> {
     Ok(())
 }
 
+//Compute the reverse of krad, is cheaper and usefull than radk
 fn build_reverse_krad_map(krad_data: &HashMap<char, Vec<char>>) -> HashMap<char, Vec<char>> {
     let mut reverse_map: HashMap<char, Vec<char>> = HashMap::new();
     for (&kanji, components) in krad_data {
@@ -397,18 +401,19 @@ fn build_reverse_krad_map(krad_data: &HashMap<char, Vec<char>>) -> HashMap<char,
     reverse_map
 }
 
-fn save_dataset_as_json(dataset: &[KanjiData], path: &str) -> Result<()> {
-    println!("Saving the full data set...");
-    let out_file = std::fs::File::create(path).context("Impossible to create the output file")?;
-    let writer = BufWriter::new(out_file);
+// fn save_dataset_as_json(dataset: &[KanjiData], path: &str) -> Result<()> {
+//     println!("Saving the full data set...");
+//     let out_file = std::fs::File::create(path).context("Impossible to create the output file")?;
+//     let writer = BufWriter::new(out_file);
 
-    serde_json::to_writer_pretty(writer, &dataset)
-        .context("Error while serializing data set to JSON")?;
+//     serde_json::to_writer_pretty(writer, &dataset)
+//         .context("Error while serializing data set to JSON")?;
 
-    println!("JSON data set saved successfully");
-    Ok(())
-}
+//     println!("JSON data set saved successfully");
+//     Ok(())
+// }
 
+// Kanji char normalization, required for krad file
 pub fn normalize_krad_component(c: char) -> char {
     match c {
         '｜' => '丨', // U+FF5C -> U+4E28

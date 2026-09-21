@@ -1,10 +1,11 @@
 use crate::repo::{JlptLevel, KanjiRepo, SearchCriteria};
-use kanji_tui::model::KanjiData;
+use crate::model::KanjiData;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::{fs::File, io::BufReader};
 
+//Indexes for fast searches
 pub struct Indexes {
     jlpt_index: HashMap<u8, Vec<usize>>,
     grade_index: HashMap<u8, Vec<usize>>,
@@ -21,6 +22,7 @@ enum MissingValue {
 }
 
 impl Indexes {
+    //Create indexes from the binary dataset stored locally
     pub fn build(dataset: &[KanjiData]) -> Self {
         let mut jlpt_index: HashMap<u8, Vec<usize>> = HashMap::new();
         let mut grade_index: HashMap<u8, Vec<usize>> = HashMap::new();
@@ -76,7 +78,8 @@ impl Indexes {
     }
 }
 
-fn handle_missing_value(kanji: &KanjiData, value_type: MissingValue) -> u16 {
+fn handle_missing_value(kanji: &KanjiData, value_type: MissingValue)
+ -> u16 {
     return match value_type {
         MissingValue::Jlpt => {
             if kanji.names.is_empty() {
@@ -111,7 +114,10 @@ impl InMemoryJson {
         }
     }
 
-    fn get_candidates(&self, criteria: &SearchCriteria) -> Vec<usize> {
+    /* In case of filtered search, first try to reduce the search space by using the smallest
+    subset of kanji and finally in case of textual search, address it on the smallest subset*/
+    fn get_candidates(&self, criteria: &SearchCriteria)
+    -> Vec<usize> {
         let mut active_indices: Vec<Cow<[usize]>> = Vec::new();
 
         // JLPT
@@ -212,7 +218,8 @@ impl InMemoryJson {
 }
 
 impl KanjiRepo for InMemoryJson {
-    fn search(&self, search_criteria: &SearchCriteria) -> Vec<&KanjiData> {
+    fn search(&self, search_criteria: &SearchCriteria)
+    -> Vec<&KanjiData> {
         let candidates = self.get_candidates(&search_criteria);
 
         let mut results: Vec<&KanjiData> = candidates
@@ -226,12 +233,10 @@ impl KanjiRepo for InMemoryJson {
         results
     }
 
-    fn get_index_by_kanji(&self, kanji: char) -> Option<usize> {
-        self.indexes.char_to_index.get(&kanji).copied()
-    }
     fn get_by_index(&self, index: usize) -> Option<&KanjiData> {
         self.kanji_dataset.get(index)
     }
+
     fn get_by_kanji(&self, kanji: char) -> Option<&KanjiData> {
         if let Some(index) = self.indexes.char_to_index.get(&kanji) {
             self.kanji_dataset.get(*index)
@@ -241,14 +246,16 @@ impl KanjiRepo for InMemoryJson {
     }
 }
 
-fn load_dataset() -> Result<Vec<KanjiData>, Box<dyn std::error::Error>> {
+fn load_dataset()
+-> Result<Vec<KanjiData>, Box<dyn std::error::Error>> {
     let file = File::open("data/kanji_dataset.bin")?;
     let reader = BufReader::new(file);
     let dataset: Vec<KanjiData> = bincode::deserialize_from(reader)?;
     Ok(dataset)
 }
 
-fn intersect_sorted(a: &[usize], b: &[usize]) -> Vec<usize> {
+fn intersect_sorted(a: &[usize], b: &[usize])
+-> Vec<usize> {
     let mut iter_a = a.iter().peekable();
     let mut iter_b = b.iter().peekable();
     let mut result = Vec::new();
