@@ -1,10 +1,10 @@
-use crate::model::{KanjiData, MyPoint};
-use crate::app::History;
 use crate::app::search::*;
-use crate::utilities::format_range;
 use crate::app::{App, JumpElement};
-use crate::model::{JlptLevel, KanjiGrade};
+use crate::app::{History, Theme};
 use crate::constants::KANGXI_RADICALS;
+use crate::model::{JlptLevel, KanjiGrade};
+use crate::model::{KanjiData, MyPoint};
+use crate::utilities::format_range;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::execute;
 use ratatui::layout::Alignment;
@@ -65,46 +65,49 @@ pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> MainLayout {
     }
 }
 
-pub fn base_layout_block<'a>(title: &'a str) -> Block<'a> {
+pub fn base_layout_block<'a>(title: &'a str, theme: &Theme) -> Block<'a> {
     let offset_x = 0;
     let title_text = format!("{}{}", "═".repeat(offset_x), title);
 
     let block = Block::default()
+        .style(Style::default().bg(theme.bg))
         .padding(Padding::vertical(1))
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(theme.border))
         .title(TLine::from(vec![Span::styled(
             title_text,
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.btitle).bold(),
         )]));
 
     block
 }
 
 pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app: &App) {
+    let current_theme = &app.current_theme();
     let tot_kanji = app.search_results.len();
-    let block = base_layout_block("Kanji").padding(Padding::ZERO);
+    let block = base_layout_block("Kanji", current_theme).padding(Padding::ZERO);
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
     if kanji.strokes.is_empty() {
-        let vertical_center: [Rect; 3] = Layout::vertical([
+        let vertical_center: [Rect; 4] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Length(1),
             Constraint::Fill(1),
+            Constraint::Length(1),
         ])
         .areas(inner_area);
 
         let paragraph = Paragraph::new(kanji.kanji.to_string())
             .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .style(Style::default().fg(current_theme.rtext).bold());
+
+        let title = format!("{}/{}", app.current_kanji + 1, tot_kanji);
+        let footer = Paragraph::new(title)
+            .style(Style::default().fg(current_theme.rtext))
+            .alignment(Alignment::Center);
+        frame.render_widget(footer, vertical_center[3]);
 
         frame.render_widget(paragraph, vertical_center[1]);
         return;
@@ -114,20 +117,31 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner_area);
 
     let canvas_widget = Canvas::default()
+        .background_color(current_theme.bg)
         .x_bounds([8.0, 101.0])
         .y_bounds([8.0, 101.0])
         .marker(Marker::Braille)
         .paint(|ctx| {
             if app.anim_state.is_finished {
                 for stroke in &kanji.strokes {
-                    draw_stroke_points(ctx, &stroke.strokes, stroke.strokes.len(), Color::Red);
+                    draw_stroke_points(
+                        ctx,
+                        &stroke.strokes,
+                        stroke.strokes.len(),
+                        current_theme.kanji_stroke_old,
+                    );
                 }
             } else {
                 let max_stroke = app.anim_state.current_stroke.min(kanji.strokes.len());
 
                 for s_idx in 0..max_stroke {
                     let stroke = &kanji.strokes[s_idx];
-                    draw_stroke_points(ctx, &stroke.strokes, stroke.strokes.len(), Color::Gray);
+                    draw_stroke_points(
+                        ctx,
+                        &stroke.strokes,
+                        stroke.strokes.len(),
+                        current_theme.kanji_stroke_old,
+                    );
                 }
 
                 if app.anim_state.current_stroke < kanji.strokes.len() {
@@ -139,7 +153,12 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
                         .saturating_add(1)
                         .min(current_stroke.strokes.len());
 
-                    draw_stroke_points(ctx, &current_stroke.strokes, points_to_draw, Color::Red);
+                    draw_stroke_points(
+                        ctx,
+                        &current_stroke.strokes,
+                        points_to_draw,
+                        current_theme.kanji_stroke_new,
+                    );
                 }
             }
         });
@@ -158,11 +177,18 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
         format!("Stroke: {}/{}", display_stroke, kanji.strokes.len())
     };
 
-    let paragraph = Paragraph::new(footer_content).alignment(Alignment::Center);
+    let paragraph = Paragraph::new(footer_content)
+        .style(Style::default().fg(current_theme.rtext))
+        .alignment(Alignment::Center);
     frame.render_widget(paragraph, footer_area);
 }
 
-pub fn render_radical_section(frame: &mut Frame, area: Rect, radical: Option<&KanjiData>) {
+pub fn render_radical_section(
+    frame: &mut Frame,
+    area: Rect,
+    radical: Option<&KanjiData>,
+    theme: &Theme,
+) {
     if let Some(rad) = radical {
         let indent = 10 as usize;
         let max_length = (area.width as usize).saturating_sub(2 + 1 + indent);
@@ -197,87 +223,105 @@ pub fn render_radical_section(frame: &mut Frame, area: Rect, radical: Option<&Ka
         lines.push(TLine::from(vec![
             Span::styled(
                 format!(" {:<indent$}", "Symbol:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
-            Span::raw(symbol),
+            Span::raw(symbol).style(Style::default().fg(theme.vtext)),
         ]));
         lines.push(TLine::from(vec![
             Span::styled(
                 format!(" {:<indent$}", "Name:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
-            Span::raw(names),
+            Span::raw(names).style(Style::default().fg(theme.vtext)),
         ]));
-        append_list_item(&mut lines, "Meanings:", &meanings, Some(indent));
-        append_list_item(&mut lines, "Variants:", &variants, Some(indent));
+        append_list_item(
+            &mut lines,
+            "Meanings:",
+            &meanings,
+            Some(indent),
+            theme.rtext,
+            theme.vtext,
+        );
+        append_list_item(
+            &mut lines,
+            "Variants:",
+            &variants,
+            Some(indent),
+            theme.rtext,
+            theme.vtext,
+        );
 
-        let paragraph = Paragraph::new(lines).block(base_layout_block("Radical"));
+        let paragraph = Paragraph::new(lines).block(base_layout_block("Radical", theme));
         frame.render_widget(paragraph, area);
     } else {
         let text_lines = vec![
             TLine::from(""),
-            TLine::styled("No radical info", Style::default().fg(Color::DarkGray)),
+            TLine::styled("No radical info", Style::default().fg(theme.text_muted)),
         ];
 
-        let paragraph = Paragraph::new(text_lines).block(base_layout_block("Radical"));
+        let paragraph = Paragraph::new(text_lines).block(base_layout_block("Radical", theme));
         frame.render_widget(paragraph, area);
     }
 }
 
-pub fn render_stats_section(frame: &mut Frame, area: Rect, kanji: &KanjiData) {
+pub fn render_stats_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, theme: &Theme) {
     let jlpt_span = match kanji.jlpt_level {
-        Some(level) => Span::raw(format!("N{level}")),
-        None => Span::styled("not available", Style::default().fg(Color::DarkGray)),
+        Some(level) => Span::styled(format!("N{level}"), Style::default().fg(theme.vtext)),
+        None => Span::styled("not available", Style::default().fg(theme.text_muted)),
     };
 
-    let grade_span = Span::raw(kanji.grade_detail());
+    let grade_span = Span::styled(kanji.grade_detail(), Style::default().fg(theme.vtext));
 
     let stokes_span = match kanji.strokes_count {
-        Some(strokes) => Span::raw(strokes.to_string()),
-        None => Span::styled("not available", Style::default().fg(Color::DarkGray)),
+        Some(strokes) => Span::styled(strokes.to_string(), Style::default().fg(theme.vtext)),
+        None => Span::styled("not available", Style::default().fg(theme.text_muted)),
     };
 
     let freq_span = match kanji.freq_rank {
-        Some(freq_rank) => Span::raw(format!("#{freq_rank}/2501")),
-        None => Span::styled("not available", Style::default().fg(Color::DarkGray)),
+        Some(freq_rank) => Span::styled(
+            format!("#{freq_rank}/2501"),
+            Style::default().fg(theme.vtext),
+        ),
+        None => Span::styled("not available", Style::default().fg(theme.text_muted)),
     };
 
     let lines = vec![
         TLine::from(vec![
             Span::styled(
                 format!("{:<10}", " JLPT:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
             jlpt_span,
         ]),
         TLine::from(vec![
             Span::styled(
                 format!("{:<10}", " Grade:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
             grade_span,
         ]),
         TLine::from(vec![
             Span::styled(
                 format!("{:<10}", " Strokes:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
             stokes_span,
         ]),
         TLine::from(vec![
             Span::styled(
                 format!("{:<10}", " Ranking:"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.rtext).bold(),
             ),
             freq_span,
         ]),
     ];
 
-    let paragraph = Paragraph::new(lines).block(base_layout_block("Statistics"));
+    let paragraph = Paragraph::new(lines).block(base_layout_block("Statistics", theme));
     frame.render_widget(paragraph, area);
 }
 
 pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, app: &App) {
+    let current_theme = &app.current_theme();
     let dec_title = "Compounds:";
     let on_title = "Onyomi:";
     let kun_title = "Kunyomi:";
@@ -287,8 +331,8 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
     let decomp_lines: Vec<TLine> = if kanji.decomposition.is_empty() {
         vec![TLine::from(vec![
             Span::styled(" ", Style::default()),
-            Span::styled(dec_title, Style::default().fg(Color::DarkGray)),
-            Span::styled(" not available", Style::default().fg(Color::DarkGray)),
+            Span::styled(dec_title, Style::default().fg(current_theme.rtext).bold()),
+            Span::styled(" not available", Style::default().fg(current_theme.text_muted)),
         ])]
     } else {
         let max_width = (area.width as usize).saturating_sub(2);
@@ -303,7 +347,7 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
         let mut current_width = title_text.len();
         current_spans.push(Span::styled(
             title_text,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(current_theme.rtext),
         ));
 
         let last_idx = kanji.decomposition.len() - 1;
@@ -311,9 +355,11 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
         for (idx, n) in kanji.decomposition.iter().enumerate() {
             let is_selected = app.jump_selected == JumpElement::Compounds(idx);
             let style = if is_selected {
-                Style::default().fg(Color::Black).bg(Color::Yellow)
+                Style::default()
+                    .fg(current_theme.htext)
+                    .bg(current_theme.utext)
             } else {
-                Style::default().fg(Color::Reset)
+                Style::default().fg(current_theme.utext)
             };
 
             let elem_text = format!(" {} ", n);
@@ -330,7 +376,10 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
             current_spans.push(Span::styled(elem_text, style));
 
             if !sep_text.is_empty() {
-                current_spans.push(Span::styled(sep_text, Style::default().fg(Color::DarkGray)));
+                current_spans.push(Span::styled(
+                    sep_text,
+                    Style::default().fg(current_theme.rtext),
+                ));
             }
 
             current_width += item_width;
@@ -386,13 +435,42 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
     let mut lines = Vec::new();
     lines.extend(decomp_lines);
     lines.push(TLine::raw(""));
-    append_list_item(&mut lines, on_title, &onyomi, None);
-    append_list_item(&mut lines, kun_title, &kunyomi, None);
-    append_list_item(&mut lines, nano_title, &nanori, None);
+    append_list_item(
+        &mut lines,
+        on_title,
+        &onyomi,
+        None,
+        current_theme.rtext,
+        current_theme.vtext,
+    );
+    append_list_item(
+        &mut lines,
+        kun_title,
+        &kunyomi,
+        None,
+        current_theme.rtext,
+        current_theme.vtext,
+    );
+    append_list_item(
+        &mut lines,
+        nano_title,
+        &nanori,
+        None,
+        current_theme.rtext,
+        current_theme.vtext,
+    );
     lines.push(TLine::raw(""));
-    append_list_item(&mut lines, mean_title, &meanings, None);
+    append_list_item(
+        &mut lines,
+        mean_title,
+        &meanings,
+        None,
+        current_theme.rtext,
+        current_theme.vtext,
+    );
 
-    let paragraph = Paragraph::new(lines).block(base_layout_block("Reading & Meanings"));
+    let paragraph =
+        Paragraph::new(lines).block(base_layout_block("Reading & Meanings", current_theme));
     frame.render_widget(paragraph, area);
 }
 
@@ -401,10 +479,11 @@ pub fn render_used_in_section(
     area: Rect,
     compounds: Vec<&KanjiData>,
     compounds_state: &mut ListState,
+    theme: &Theme,
 ) {
     if compounds.is_empty() {
-        let empty_item = vec![ListItem::new("No data available")];
-        let list = List::new(empty_item).block(base_layout_block("Used in"));
+        let empty_item = vec![ListItem::new("No data available").style(Style::default().fg(theme.text_muted))];
+        let list = List::new(empty_item).block(base_layout_block("Used in", theme));
         frame.render_widget(list, area);
         return;
     }
@@ -423,20 +502,27 @@ pub fn render_used_in_section(
                 c.meanings.join(", ")
             );
             let content = textwrap::fill(&line, &options);
-            append_list_item(&mut lines, "", &content, Some(0));
+            append_list_item(&mut lines, "", &content, Some(0), theme.rtext, theme.utext);
             ListItem::new(Text::from(lines))
         })
         .collect();
 
     let list = List::new(items)
-        .block(base_layout_block("Used in"))
-        .highlight_style(Style::default().bg(Color::Indexed(237)).fg(Color::Yellow))
+        .block(base_layout_block("Used in", theme))
+        .highlight_style(Style::default().bg(theme.bg).fg(theme.htext))
         .highlight_symbol("❯");
 
     frame.render_stateful_widget(list, area, compounds_state);
 }
 
-pub fn append_list_item(lines: &mut Vec<TLine>, title: &str, text: &str, indent: Option<usize>) {
+pub fn append_list_item(
+    lines: &mut Vec<TLine>,
+    title: &str,
+    text: &str,
+    indent: Option<usize>,
+    rcolor: Color,
+    vcolor: Color,
+) {
     let mut lines_iter = text.lines();
 
     let indent = if let Some(indent) = indent {
@@ -449,16 +535,18 @@ pub fn append_list_item(lines: &mut Vec<TLine>, title: &str, text: &str, indent:
         lines.push(TLine::from(vec![
             Span::styled(
                 format!(" {:<indent$}", title),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(rcolor).bold(),
             ),
-            Span::raw(first_line.to_string()),
+            Span::raw(first_line.to_string()).style(Style::default().fg(vcolor)),
         ]));
 
         let padding = " ".repeat(1 + indent);
 
         for next_line in lines_iter {
             let content = format!("{}{}", padding, next_line);
-            lines.push(TLine::from(Span::raw(content)));
+            lines.push(TLine::from(
+                Span::raw(content).style(Style::default().fg(vcolor)),
+            ));
         }
     }
 }
@@ -482,7 +570,7 @@ pub fn draw_stroke_points(ctx: &mut Context, points: &[MyPoint], max_points: usi
     }
 }
 
-pub fn render_help_popup(frame: &mut Frame, used_area: u16) {
+pub fn render_help_popup(frame: &mut Frame, used_area: u16, theme: &Theme) {
     let popup_area = centered_rect(91, 70, frame.area(), used_area);
 
     frame.render_widget(Clear, popup_area);
@@ -522,14 +610,16 @@ pub fn render_help_popup(frame: &mut Frame, used_area: u16) {
     frame.render_widget(help_widget, popup_area);
 }
 
-pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) {
+pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, theme: &Theme) {
     let popup_area = centered_rect(91, 70, frame.area(), used_area);
     frame.render_widget(Clear, popup_area);
 
     let popup_block = Block::default()
+        .style(Style::default().bg(theme.bg))
         .title("Filters")
+        .title_style(Style::default().fg(theme.btitle))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.border));
 
     let inner_area = popup_block.inner(popup_area);
     frame.render_widget(popup_block, popup_area);
@@ -546,7 +636,7 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     //JLPT
     let mut jlpt_spans = vec![Span::styled(
         " JLPT Level: ",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.rtext),
     )];
 
     let jlpt_items: Vec<Span> = (1..=6)
@@ -562,14 +652,14 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
 
             let style = match (is_focused, is_selected) {
                 (true, true) => Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                    .fg(theme.htext)
+                    .bg(theme.utext)
                     .add_modifier(Modifier::BOLD),
-                (true, false) => Style::default().fg(Color::Black).bg(Color::Yellow),
+                (true, false) => Style::default().fg(theme.htext).bg(theme.utext),
                 (false, true) => Style::default()
-                    .fg(Color::Green)
+                    .fg(theme.kanji_stroke_old)
                     .add_modifier(Modifier::BOLD),
-                (false, false) => Style::default().fg(Color::Reset),
+                (false, false) => Style::default().fg(theme.htext),
             };
 
             let label = if n == 6 {
@@ -585,10 +675,7 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
 
             let span = Span::styled(text, style);
             if n < 6 {
-                vec![
-                    span,
-                    Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                ]
+                vec![span, Span::styled(" | ", Style::default().fg(theme.rtext))]
             } else {
                 vec![span]
             }
@@ -601,10 +688,7 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     frame.render_widget(jlpt_widget, chunks[0]);
 
     //Grade
-    let mut grade_spans = vec![Span::styled(
-        " Grade: ",
-        Style::default().fg(Color::DarkGray),
-    )];
+    let mut grade_spans = vec![Span::styled(" Grade: ", Style::default().fg(theme.rtext))];
     let grade_items: Vec<Span> = KanjiGrade::descs()
         .into_iter()
         .flat_map(|(r, d, idx)| {
@@ -617,14 +701,14 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
 
             let style = match (is_focused, is_selected) {
                 (true, true) => Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                    .fg(theme.htext)
+                    .bg(theme.utext)
                     .add_modifier(Modifier::BOLD),
-                (true, false) => Style::default().fg(Color::Black).bg(Color::Yellow),
+                (true, false) => Style::default().fg(theme.htext).bg(theme.utext),
                 (false, true) => Style::default()
-                    .fg(Color::Green)
+                    .fg(theme.kanji_stroke_old)
                     .add_modifier(Modifier::BOLD),
-                (false, false) => Style::default().fg(Color::Reset),
+                (false, false) => Style::default().fg(theme.htext),
             };
 
             let text = if is_selected {
@@ -635,10 +719,7 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
 
             let span = Span::styled(text, style);
             if (*idx as u8) < 8 {
-                vec![
-                    span,
-                    Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                ]
+                vec![span, Span::styled(" | ", Style::default().fg(theme.rtext))]
             } else {
                 vec![span]
             }
@@ -654,8 +735,17 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     let (min_stroke, max_stroke) = format_range(form.draft.strokes.as_ref());
     let stroke_prefix = " Number of strokes: ";
     let stroke_widget = Paragraph::new(TLine::from(vec![
-        Span::styled(stroke_prefix, Style::default().fg(Color::DarkGray)),
-        Span::raw(format!("min {} max {}", min_stroke, max_stroke)),
+        Span::styled(stroke_prefix, Style::default().fg(theme.rtext)),
+        Span::styled("min ", Style::default().fg(theme.rtext)),
+        Span::styled(
+            min_stroke.to_string(),
+            Style::default().fg(theme.kanji_stroke_old),
+        ),
+        Span::styled(" max ", Style::default().fg(theme.rtext)),
+        Span::styled(
+            max_stroke.to_string(),
+            Style::default().fg(theme.kanji_stroke_old),
+        ),
     ]));
     frame.render_widget(stroke_widget, chunks[2]);
 
@@ -663,8 +753,17 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     let (min_rank, max_rank) = format_range(form.draft.rank.as_ref());
     let rank_prefix = " Rank: ";
     let rank_widget = Paragraph::new(TLine::from(vec![
-        Span::styled(rank_prefix, Style::default().fg(Color::DarkGray)),
-        Span::raw(format!("min {} max {}", min_rank, max_rank)),
+        Span::styled(rank_prefix, Style::default().fg(theme.rtext)),
+        Span::styled("min ", Style::default().fg(theme.rtext)),
+        Span::styled(
+            min_rank.to_string(),
+            Style::default().fg(theme.kanji_stroke_old),
+        ),
+        Span::styled(" max ", Style::default().fg(theme.rtext)),
+        Span::styled(
+            max_rank.to_string(),
+            Style::default().fg(theme.kanji_stroke_old),
+        ),
     ]));
     frame.render_widget(rank_widget, chunks[3]);
 
@@ -672,8 +771,8 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     let query_prefix = " Textual search: ";
     let query_text = form.draft.query_text.as_deref().unwrap_or("_");
     let text_widget = Paragraph::new(TLine::from(vec![
-        Span::styled(query_prefix, Style::default().fg(Color::DarkGray)),
-        Span::raw(query_text),
+        Span::styled(query_prefix, Style::default().fg(theme.rtext)),
+        Span::styled(query_text, Style::default().fg(theme.kanji_stroke_old)),
     ]));
     frame.render_widget(text_widget, chunks[4]);
 
@@ -708,14 +807,21 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm) 
     }
 }
 
-pub fn render_search_rad_form(frame: &mut Frame, used_area: u16, form: &mut SearchForm) {
+pub fn render_search_rad_form(
+    frame: &mut Frame,
+    used_area: u16,
+    form: &mut SearchForm,
+    theme: &Theme,
+) {
     let popup_area = centered_rect(91, 57, frame.area(), used_area);
     frame.render_widget(Clear, popup_area);
 
     let popup_block = Block::default()
+        .style(Style::default().bg(theme.bg))
+        .title_style(Style::default().fg(theme.btitle))
         .title("Radical filter")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.border));
 
     let inner_area = popup_block.inner(popup_area);
     frame.render_widget(popup_block, popup_area);
@@ -744,14 +850,14 @@ pub fn render_search_rad_form(frame: &mut Frame, used_area: u16, form: &mut Sear
 
         let style = match (is_focused, is_selected) {
             (true, true) => Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(theme.htext)
+                .bg(theme.utext)
                 .add_modifier(Modifier::BOLD),
-            (true, false) => Style::default().fg(Color::Black).bg(Color::Yellow),
+            (true, false) => Style::default().fg(theme.htext).bg(theme.utext),
             (false, true) => Style::default()
-                .fg(Color::Green)
+                .fg(theme.kanji_stroke_old)
                 .add_modifier(Modifier::BOLD),
-            (false, false) => Style::default().fg(Color::Reset),
+            (false, false) => Style::default().fg(theme.htext),
         };
 
         let text = format!(" {} ", radical);
@@ -783,16 +889,16 @@ pub fn render_search_rad_form(frame: &mut Frame, used_area: u16, form: &mut Sear
     frame.render_widget(grid_paragraph, grid_area);
 }
 
-pub fn render_no_kanji(frame: &mut Frame) {
+pub fn render_no_kanji(frame: &mut Frame, theme: &Theme) {
     let [view] = Layout::vertical([Constraint::Length(22)])
         .spacing(0)
         .areas(frame.area());
-    let block = base_layout_block("").padding(Padding::ZERO);
+    let block = base_layout_block("", theme).padding(Padding::ZERO);
 
     frame.render_widget(block, view);
 }
 
-pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16) {
+pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme) {
     let target_area: Rect = Rect {
         x: frame.area().x,
         y: frame.area().y,
@@ -803,7 +909,7 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
     let [_, history_area, title_area] = Layout::horizontal([
         Constraint::Fill(1),
         Constraint::Percentage(4),
-        Constraint::Length(1),
+        Constraint::Length(2),
     ])
     .areas(target_area);
 
@@ -813,7 +919,8 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
             break;
         }
 
-        let char_widget = Paragraph::new(char.to_string());
+        let char_widget =
+            Paragraph::new(char.to_string()).style(Style::default().fg(theme.kanji_stroke_old));
         frame.render_widget(char_widget, Rect::new(title_area.x, char_y, 1, 1));
     }
 
@@ -825,9 +932,9 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
         .enumerate()
         .map(|(i, entry)| {
             let style = if i == history.cursor {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(theme.kanji_stroke_old)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.vtext)
             };
             ListItem::new(format!("{}", entry)).style(style)
         })
@@ -835,9 +942,10 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
 
     let list = List::new(items).block(
         Block::default()
+            .style(Style::default().bg(theme.bg))
             .title("")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(theme.border)),
     );
 
     frame.render_widget(list, history_area);

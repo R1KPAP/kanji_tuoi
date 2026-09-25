@@ -1,6 +1,7 @@
 pub use search::{SearchCriteria, SearchField, SearchForm, RangeFilter};
 pub use anim::KanjiAnimState;
 pub use history::History;
+pub use theme::{ThemeMode, Theme};
 use crate::model::KanjiData;
 use crate::repo::KanjiRepo;
 use crate::ui::*;
@@ -13,6 +14,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 pub mod anim;
 pub mod history;
 pub mod search;
+pub mod theme;
 
 #[derive(PartialEq)]
 pub enum ActivePopup {
@@ -36,6 +38,7 @@ pub struct App<'a> {
     pub current_kanji: usize,
     pub active_search: SearchCriteria,
     pub jump_selected: JumpElement,
+    pub selected_theme: ThemeMode,
 
     pub compounds_state: ListState,
     pub anim_state: KanjiAnimState,
@@ -59,7 +62,12 @@ impl<'a> App<'a> {
             search_form: None,
             jump_history: History::new(),
             jump_selected: JumpElement::None,
+            selected_theme: ThemeMode::Original,
         }
+    }
+
+    pub fn current_theme(&self) -> Theme {
+        Theme::from_mode(self.selected_theme)
     }
 
     fn perform_search(&mut self) {
@@ -72,6 +80,10 @@ impl<'a> App<'a> {
     fn reset_jump(&mut self) {
         self.compounds_state.select(None);
         self.jump_selected = JumpElement::None
+    }
+
+    fn switch_theme(&mut self) {
+        self.selected_theme = ThemeMode::toggle(self.selected_theme)
     }
 
     fn current_kanji(&self) -> Option<&KanjiData> {
@@ -238,11 +250,12 @@ impl<'a> App<'a> {
         let layout = define_layout(frame.area(), self.current_kanji());
         let current_kanji = self.current_kanji();
         let current_radical = self.current_radical();
+        let current_theme = &self.current_theme();
 
         if let Some(kanji) = current_kanji {
             render_kanji_canvas(frame, layout.canvas, kanji, &self);
-            render_radical_section(frame, layout.radical, current_radical);
-            render_stats_section(frame, layout.stats, kanji);
+            render_radical_section(frame, layout.radical, current_radical, current_theme);
+            render_stats_section(frame, layout.stats, kanji, current_theme);
             render_details_section(frame, layout.details, kanji, &self);
 
             let compounds: Vec<&KanjiData> = kanji
@@ -251,13 +264,13 @@ impl<'a> App<'a> {
                 .filter_map(|kanji_symbol| self.repo.get_by_kanji(*kanji_symbol))
                 .collect();
 
-            render_used_in_section(frame, layout.used_in, compounds, &mut self.compounds_state);
+            render_used_in_section(frame, layout.used_in, compounds, &mut self.compounds_state, current_theme);
         } else {
-            render_no_kanji(frame)
+            render_no_kanji(frame, current_theme)
         }
         match self.active_popup {
             ActivePopup::Help => {
-                render_help_popup(frame, layout.canvas.height + layout.details.height)
+                render_help_popup(frame, layout.canvas.height + layout.details.height, current_theme)
             }
             ActivePopup::Search => {
                 if let Some(search_form) = &self.search_form {
@@ -265,6 +278,7 @@ impl<'a> App<'a> {
                         frame,
                         layout.canvas.height + layout.details.height,
                         search_form,
+                        current_theme,
                     );
                 }
             }
@@ -274,6 +288,7 @@ impl<'a> App<'a> {
                         frame,
                         layout.canvas.height + layout.details.height,
                         search_form,
+                        current_theme,
                     );
                 }
             }
@@ -282,6 +297,7 @@ impl<'a> App<'a> {
                     frame,
                     &self.jump_history,
                     layout.canvas.height + layout.details.height,
+                    current_theme,
                 );
             }
             ActivePopup::Nope => {}
@@ -358,6 +374,7 @@ impl<'a> App<'a> {
                             form.active_field = SearchField::Jlpt(0);
                         }
                     }
+                    KeyCode::Char('t') => self.switch_theme(),
                     KeyCode::Char(' ') => search_form.toggle_current(),
                     KeyCode::Up => search_form.move_up(),
                     KeyCode::Right => search_form.move_right(),
@@ -429,6 +446,7 @@ impl<'a> App<'a> {
                     self.anim_state.is_paused = !self.anim_state.is_paused
                 }
                 KeyCode::Char('o') => self.anim_state.reset(),
+                KeyCode::Char('t') => self.switch_theme(),
                 KeyCode::Up => self.to_next_stroke(),
                 KeyCode::Down => self.to_prev_stroke(),
                 KeyCode::Left => {
