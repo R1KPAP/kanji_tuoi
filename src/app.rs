@@ -1,15 +1,15 @@
-pub use search::{SearchCriteria, SearchField, SearchForm, RangeFilter};
-pub use anim::KanjiAnimState;
-pub use history::History;
-pub use theme::{ThemeMode, Theme};
+use crate::constants::KANGXI_RADICALS;
 use crate::model::KanjiData;
 use crate::repo::KanjiRepo;
 use crate::ui::*;
-use crate::constants::KANGXI_RADICALS;
-use ratatui::{DefaultTerminal, Frame, widgets::ListState};
-use std::time::Duration;
-use std::io;
+pub use anim::KanjiAnimState;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+pub use history::History;
+use ratatui::{DefaultTerminal, Frame, widgets::ListState};
+pub use search::{RangeFilter, SearchCriteria, SearchField, SearchForm};
+use std::io;
+use std::time::Duration;
+pub use theme::{Theme, ThemeMode};
 
 pub mod anim;
 pub mod history;
@@ -32,6 +32,38 @@ pub enum JumpElement {
     UsedIn(usize),
     None,
 }
+
+#[derive(PartialEq)]
+pub enum ScrollElem {
+    Radical,
+    Details,
+    None,
+}
+
+pub struct ScrollStates {
+    pub curr_selected: ScrollElem,
+    pub rad_offset: u16,
+    pub details_offset: u16,
+    pub popup_offset: u16,
+}
+
+impl ScrollStates {
+    pub fn reset(&mut self) {
+        self.curr_selected = ScrollElem::None;
+        self.rad_offset = 0;
+        self.details_offset = 0;
+        self.popup_offset = 0;
+    }
+    pub fn default() -> Self {
+        Self {
+            curr_selected: ScrollElem::None,
+            rad_offset: 0,
+            details_offset: 0,
+            popup_offset: 0,
+        }
+    }
+}
+
 pub struct App<'a> {
     pub repo: &'a dyn KanjiRepo,
     pub should_quit: bool,
@@ -40,6 +72,7 @@ pub struct App<'a> {
     pub active_search: SearchCriteria,
     pub jump_selected: JumpElement,
     pub selected_theme: ThemeMode,
+    pub scroll_states: ScrollStates,
 
     pub compounds_state: ListState,
     pub anim_state: KanjiAnimState,
@@ -64,6 +97,7 @@ impl<'a> App<'a> {
             jump_history: History::new(),
             jump_selected: JumpElement::None,
             selected_theme: ThemeMode::Original,
+            scroll_states: ScrollStates::default(),
         }
     }
 
@@ -248,16 +282,29 @@ impl<'a> App<'a> {
 
     //Draws the UI
     fn render(&mut self, frame: &mut Frame) {
+        
         let layout = define_layout(frame.area(), self.current_kanji());
-        let current_kanji = self.current_kanji();
+        let current_kanji = if self.jump_history.items.is_empty() {
+            self.search_results.get(self.current_kanji).copied()
+        } else {
+            self.repo.get_by_kanji(self.jump_history.current())
+        };
         let current_radical = self.current_radical();
         let current_theme = &self.current_theme();
 
-        if let Some(kanji) = current_kanji {
+        if let Some(kanji) = current_kanji
+            && let Some(layout) = layout
+        {
             render_kanji_canvas(frame, layout.canvas, kanji, &self);
-            render_radical_section(frame, layout.radical, current_radical, current_theme);
+            render_radical_section(
+                frame,
+                layout.radical,
+                current_radical,
+                current_theme,
+            &mut self.scroll_states,
+            );
             render_stats_section(frame, layout.stats, kanji, current_theme);
-            render_details_section(frame, layout.details, kanji, &self);
+            render_details_section(frame, layout.details, kanji, self);
 
             let compounds: Vec<&KanjiData> = kanji
                 .used_in
@@ -265,50 +312,75 @@ impl<'a> App<'a> {
                 .filter_map(|kanji_symbol| self.repo.get_by_kanji(*kanji_symbol))
                 .collect();
 
-            render_used_in_section(frame, layout.used_in, compounds, &mut self.compounds_state, current_theme);
+            render_used_in_section(
+                frame,
+                layout.used_in,
+                compounds,
+                &mut self.compounds_state,
+                current_theme,
+            );
+
+            match self.active_popup {
+                ActivePopup::Help => {
+                    let used_height = if layout.layout_type == LayoutType::Horizontal {
+                        layout.canvas.height + layout.details.height
+                    } else {
+                        (layout.canvas.height * 2) + layout.details.height
+                    };
+                    render_help_popup(frame, used_height, current_theme, layout.layout_type, &mut self.scroll_states)
+                }
+                ActivePopup::Search => {
+                    if let Some(search_form) = &self.search_form {
+                        let used_height = if layout.layout_type == LayoutType::Horizontal {
+                            layout.canvas.height + layout.details.height
+                        } else {
+                            (layout.canvas.height * 2) + layout.details.height
+                        };
+                        render_search_form(
+                            frame,
+                            used_height,
+                            search_form,
+                            current_theme,
+                            layout.layout_type,
+                        );
+                    }
+                }
+                ActivePopup::SearchRad => {
+                    if let Some(search_form) = &mut self.search_form {
+                        let used_height = if layout.layout_type == LayoutType::Horizontal {
+                            layout.canvas.height + layout.details.height
+                        } else {
+                            (layout.canvas.height * 2) + layout.details.height
+                        };
+                        render_search_rad_form(frame, used_height, search_form, current_theme, layout.layout_type);
+                    }
+                }
+                ActivePopup::History => {
+                    let used_height = if layout.layout_type == LayoutType::Horizontal {
+                            layout.canvas.height + layout.details.height
+                        } else {
+                            (layout.canvas.height * 2) + layout.details.height
+                        };
+                    render_history_popup(
+                        frame,
+                        &self.jump_history,
+                        used_height,
+                        current_theme,
+                        &layout.layout_type,
+                    );
+                }
+                ActivePopup::Mapping => {
+                    let used_height = if layout.layout_type == LayoutType::Horizontal {
+                        layout.canvas.height + layout.details.height
+                    } else {
+                        (layout.canvas.height * 2) + layout.details.height
+                    };
+                    render_keys_popup(frame, used_height, current_theme, layout.layout_type,&mut self.scroll_states);
+                }
+                ActivePopup::Nope => {}
+            }
         } else {
             render_no_kanji(frame, current_theme)
-        }
-        match self.active_popup {
-            ActivePopup::Help => {
-                render_help_popup(frame, layout.canvas.height + layout.details.height, current_theme)
-            }
-            ActivePopup::Search => {
-                if let Some(search_form) = &self.search_form {
-                    render_search_form(
-                        frame,
-                        layout.canvas.height + layout.details.height,
-                        search_form,
-                        current_theme,
-                    );
-                }
-            }
-            ActivePopup::SearchRad => {
-                if let Some(search_form) = &mut self.search_form {
-                    render_search_rad_form(
-                        frame,
-                        layout.canvas.height + layout.details.height,
-                        search_form,
-                        current_theme,
-                    );
-                }
-            }
-            ActivePopup::History => {
-                render_history_popup(
-                    frame,
-                    &self.jump_history,
-                    layout.canvas.height + layout.details.height,
-                    current_theme,
-                );
-            }
-            ActivePopup::Mapping => {
-                render_keys_popup(
-                    frame,
-                    layout.canvas.height + layout.details.height,
-                    current_theme,
-                );
-            }
-            ActivePopup::Nope => {}
         }
     }
 
@@ -399,6 +471,44 @@ impl<'a> App<'a> {
             }
         } else {
             match key.code {
+                KeyCode::Char(' ') => {
+                    self.scroll_states.curr_selected = match self.scroll_states.curr_selected {
+                        ScrollElem::None | ScrollElem::Details => ScrollElem::Radical,
+                        _=> ScrollElem::Details,
+                    }
+                },
+                KeyCode::Char('-') => {
+                    if self.active_popup == ActivePopup::Help ||
+                        self.active_popup == ActivePopup::Mapping {
+                            self.scroll_states.popup_offset = 
+                                self.scroll_states.popup_offset.saturating_sub(1);
+                    }
+                    else {
+                        match self.scroll_states.curr_selected {
+                        ScrollElem::Radical => self.scroll_states.rad_offset = 
+                            self.scroll_states.rad_offset.saturating_sub(1),
+                        ScrollElem::Details => self.scroll_states.details_offset =
+                            self.scroll_states.details_offset.saturating_sub(1),
+                        _=> {},
+                        }
+                    }
+                },
+                KeyCode::Char('+') => {
+                    if self.active_popup == ActivePopup::Help ||
+                        self.active_popup == ActivePopup::Mapping {
+                            self.scroll_states.popup_offset = 
+                                self.scroll_states.popup_offset.saturating_add(1);
+                    }
+                    else {
+                        match self.scroll_states.curr_selected {
+                        ScrollElem::Radical => self.scroll_states.rad_offset = 
+                            self.scroll_states.rad_offset.saturating_add(1),
+                        ScrollElem::Details => self.scroll_states.details_offset =
+                            self.scroll_states.details_offset.saturating_add(1),
+                        _=> {},
+                        }
+                    }
+                },
                 KeyCode::Tab => {
                     self.jump_selected = match self.jump_selected {
                         JumpElement::Compounds(_) => {
@@ -412,15 +522,17 @@ impl<'a> App<'a> {
                     }
                 }
                 KeyCode::Char('h') => {
+                    self.scroll_states.reset();
                     self.active_popup = match self.active_popup {
                         ActivePopup::History => ActivePopup::Nope,
                         _ => ActivePopup::History,
                     };
                 }
                 KeyCode::Esc => {
+                    self.scroll_states.curr_selected = ScrollElem::None;
                     self.reset_jump();
                     self.active_popup = ActivePopup::Nope;
-                },
+                }
                 KeyCode::Char('[') => self.move_left(),
                 KeyCode::Char(']') => self.move_right(),
                 KeyCode::Enter => {
@@ -433,6 +545,7 @@ impl<'a> App<'a> {
                     self.search_form = Some(SearchForm::new(&self.active_search));
                 }
                 KeyCode::Char('d') => {
+                    self.scroll_states.reset();
                     self.active_popup = match self.active_popup {
                         ActivePopup::Help => ActivePopup::Nope,
                         _ => ActivePopup::Help,
@@ -440,20 +553,24 @@ impl<'a> App<'a> {
                 }
                 KeyCode::Char('e') => self.anim_state.is_finished = true,
                 KeyCode::Char('k') => {
+                    self.scroll_states.reset();
                     self.active_popup = match self.active_popup {
                         ActivePopup::Mapping => ActivePopup::Nope,
                         _ => ActivePopup::Mapping,
                     };
                 }
                 KeyCode::Char('r') => {
+                    self.scroll_states.reset();
                     self.reset_jump();
                     self.show_current_radical();
                 }
                 KeyCode::Char('u') => {
+                    self.scroll_states.reset();
                     self.reset_jump();
                     self.undo_jump();
                 }
                 KeyCode::Char('y') => {
+                    self.scroll_states.reset();
                     self.reset_jump();
                     self.redo_jump();
                 }

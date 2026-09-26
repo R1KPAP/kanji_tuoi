@@ -1,6 +1,6 @@
-use crate::app::search::*;
-use crate::app::{App, JumpElement};
+use crate::app::{App, JumpElement, ScrollStates};
 use crate::app::{History, Theme};
+use crate::app::{ScrollElem, search::*};
 use crate::constants::KANGXI_RADICALS;
 use crate::model::{JlptLevel, KanjiGrade};
 use crate::model::{KanjiData, MyPoint};
@@ -23,15 +23,69 @@ use ratatui::{
 use std::io::stdout;
 use textwrap::Options;
 
+const NO_RESULT: &str = r"⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠟⢦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⢷⡄⠈⡓⠢⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠤⠂⢹
+⠈⡷⡄⠈⠲⢤⣈⠻⠉⠛⠉⠉⠁⠒⠖⠉⠉⠉⠒⠶⢦⣤⠴⠒⢉⣡⠴⠀⢀⠏
+⠀⢸⡿⡂⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⣴⡞⠉⠀⢀⣠⡞⠀
+⠀⠀⢙⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠀⠀⢠⡼⡟⠀⠀
+⠀⠀⡼⠋⠀⣤⣀⠀⠀⠀⠀⠀⠈⠐⣂⣄⠀⠀⠀⠀⠀⠀⠀⢀⠀⣰⡟⠁⠀⠀
+⠀⢠⡇⠀⠀⠘⠛⠃⠀⠀⠀⠀⠾⣿⠿⠟⠉⠀⠀⠀⠀⠀⠀⠀⠀⢻⠀⠀⠀⠀
+⠀⢸⡇⢺⡀⠀⢠⡒⠠⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⡀⠀⠀⠸⡇⠀⠀⠀
+⠀⢸⡇⣘⠑⡀⠀⠙⢏⣁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠂⠀⣔⣇⠀⠀⠀
+⠀⢸⡇⡁⠀⢳⣶⣾⣷⣦⣄⣀⡀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀
+⠀⠸⡇⠁⠀⠀⢏⠉⠀⠀⠙⠛⠛⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⡏⠀⠀⠀
+⠀⠀⠯⣀⣈⣀⣈⣐⣲⣄⣄⣤⣴⣆⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣈⣛⡧⠀⠀⠀";
+
+const TOO_SMALL: &str = r"
+------===+=----=---------=----
+-----=-------=-=---=-==-==-=--
+----------------:---------=-==
+-------------:..... :=--=-==--
+-----------. .-===:.. -=======
+--=**++*---.+:==-==.  ========
+--+=::------*=+++==:   ++===+=
+-+-:-------.+-+:-----  -=-----
+==:-..:::.. .=---:::  .:::=---
+-:+...:....  .-:::::......:::-
+::-.... ....  .:::.. .....:..:
+-  .. ........ .... ..........
+--.----..  ...................
+:-======..   . ...............
+:::::::::..... . ..........:::";
+
+#[derive(PartialEq)]
+pub enum LayoutType {
+    Horizontal,
+    Vertical,
+    Minimal,
+    None,
+}
 pub struct MainLayout {
     pub canvas: Rect,
     pub radical: Rect,
     pub stats: Rect,
     pub details: Rect,
     pub used_in: Rect,
+    pub layout_type: LayoutType,
 }
 
-pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> MainLayout {
+// Normal, Vertical
+pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainLayout> {
+    let top_height: u16 = 10;
+    let kanji_width = (top_height.saturating_sub(2) * 2) + 2;
+    let stats_width = 25;
+
+    if area.height < 8 || area.width < kanji_width + stats_width {
+        None
+    } else if area.width >= kanji_width + (stats_width * 2) {
+        define_hlayout(area, cur_kanji)
+    } else {
+        define_vlayout(area, cur_kanji)
+    }
+}
+
+pub fn define_hlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainLayout> {
     let details_height = cur_kanji
         .map(|k| calc_details_height(k, (area.width as f32 * 0.65) as u16))
         .unwrap_or(12);
@@ -46,7 +100,7 @@ pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> MainLayout {
 
     let [canvas, stats, radical] = Layout::horizontal([
         Constraint::Length(kanji_width),
-        Constraint::Length(29),
+        Constraint::Max(29),
         Constraint::Fill(1),
     ])
     .spacing(0)
@@ -56,13 +110,50 @@ pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> MainLayout {
         .spacing(0)
         .areas(details_section);
 
-    MainLayout {
+    Some(MainLayout {
         canvas,
         radical,
         stats,
         details,
         used_in,
-    }
+        layout_type: LayoutType::Horizontal,
+    })
+}
+
+pub fn define_vlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainLayout> {
+    let details_height = cur_kanji
+        .map(|k| calc_details_height(k, (area.width as f32 * 0.55) as u16))
+        .unwrap_or(12);
+
+    let [kanji_section, details_section, used_in, _spacer] = Layout::vertical([
+        Constraint::Length(8),
+        Constraint::Length(details_height), // Usa direttamente l'altezza calcolata senza tagliarla
+        Constraint::Length(8),
+        Constraint::Min(0), // Lo spazio vuoto in eccesso va qui in fondo
+    ])
+    .spacing(0)
+    .areas(area);
+
+    let top_height = kanji_section.height;
+    let kanji_width = (top_height.saturating_sub(2) * 2) + 2;
+
+    let [canvas, stats] =
+        Layout::horizontal([Constraint::Length(kanji_width), Constraint::Fill(1)])
+            .spacing(0)
+            .areas(kanji_section);
+
+    let [radical, details] = Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(55)])
+        .spacing(0)
+        .areas(details_section);
+
+    Some(MainLayout {
+        canvas,
+        radical,
+        stats,
+        details,
+        used_in,
+        layout_type: LayoutType::Vertical,
+    })
 }
 
 pub fn base_layout_block<'a>(title: &'a str, theme: &Theme) -> Block<'a> {
@@ -188,7 +279,10 @@ pub fn render_radical_section(
     area: Rect,
     radical: Option<&KanjiData>,
     theme: &Theme,
+    scroll_state: &mut ScrollStates,
 ) {
+    let inner_height = area.height.saturating_sub(2);
+
     if let Some(rad) = radical {
         let indent = 10 as usize;
         let max_length = (area.width as usize).saturating_sub(2 + 1 + indent);
@@ -251,7 +345,20 @@ pub fn render_radical_section(
             theme.vtext,
         );
 
-        let paragraph = Paragraph::new(lines).block(base_layout_block("Radical", theme));
+        let total_lines = lines.len() as u16;
+        let max_scroll = total_lines.saturating_sub(inner_height);
+        let clamped_offset = scroll_state.rad_offset.min(max_scroll);
+        scroll_state.rad_offset = clamped_offset;
+        let border_color = if scroll_state.curr_selected == ScrollElem::Radical {
+            theme.kanji_stroke_old
+        } else {
+            theme.border
+        };
+
+        let paragraph = Paragraph::new(lines)
+            .block(base_layout_block("Radical", theme)
+        .border_style(Style::default().fg(border_color)))
+            .scroll((clamped_offset, 0));
         frame.render_widget(paragraph, area);
     } else {
         let text_lines = vec![
@@ -259,7 +366,21 @@ pub fn render_radical_section(
             TLine::styled("No radical info", Style::default().fg(theme.text_muted)),
         ];
 
-        let paragraph = Paragraph::new(text_lines).block(base_layout_block("Radical", theme));
+        let total_lines = text_lines.len() as u16;
+        let max_scroll = total_lines.saturating_sub(inner_height);
+        let clamped_offset = scroll_state.rad_offset.min(max_scroll);
+        scroll_state.rad_offset = clamped_offset;
+        let border_color = if scroll_state.curr_selected == ScrollElem::Radical {
+            theme.kanji_stroke_old
+        } else {
+            theme.border
+        };
+
+        let paragraph = Paragraph::new(text_lines)
+            .block(
+                base_layout_block("Radical", theme)
+                    .border_style(Style::default().fg(border_color)))
+            .scroll((clamped_offset, 0));
         frame.render_widget(paragraph, area);
     }
 }
@@ -320,7 +441,7 @@ pub fn render_stats_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, th
     frame.render_widget(paragraph, area);
 }
 
-pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, app: &App) {
+pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, app: &mut App) {
     let current_theme = &app.current_theme();
     let dec_title = "Compounds:";
     let on_title = "Onyomi:";
@@ -332,7 +453,10 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
         vec![TLine::from(vec![
             Span::styled(" ", Style::default()),
             Span::styled(dec_title, Style::default().fg(current_theme.rtext).bold()),
-            Span::styled(" not available", Style::default().fg(current_theme.text_muted)),
+            Span::styled(
+                " not available",
+                Style::default().fg(current_theme.text_muted),
+            ),
         ])]
     } else {
         let max_width = (area.width as usize).saturating_sub(2);
@@ -469,8 +593,22 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
         current_theme.vtext,
     );
 
-    let paragraph =
-        Paragraph::new(lines).block(base_layout_block("Reading & Meanings", current_theme));
+    let total_lines = lines.len() as u16;
+    let inner_height = area.height.saturating_sub(2);
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    let clamped_offset = app.scroll_states.details_offset.min(max_scroll);
+    app.scroll_states.details_offset = clamped_offset;
+    let border_color = if app.scroll_states.curr_selected == ScrollElem::Details {
+        current_theme.kanji_stroke_old
+    } else {
+        current_theme.border
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .block(base_layout_block("Reading & Meanings", current_theme)
+            .border_style(Style::default().fg(border_color)))
+        .scroll((clamped_offset, 0));
+
     frame.render_widget(paragraph, area);
 }
 
@@ -482,7 +620,8 @@ pub fn render_used_in_section(
     theme: &Theme,
 ) {
     if compounds.is_empty() {
-        let empty_item = vec![ListItem::new("No data available").style(Style::default().fg(theme.text_muted))];
+        let empty_item =
+            vec![ListItem::new("No data available").style(Style::default().fg(theme.text_muted))];
         let list = List::new(empty_item).block(base_layout_block("Used in", theme));
         frame.render_widget(list, area);
         return;
@@ -570,116 +709,223 @@ pub fn draw_stroke_points(ctx: &mut Context, points: &[MyPoint], max_points: usi
     }
 }
 
-pub fn render_help_popup(frame: &mut Frame, used_area: u16, theme: &Theme) {
-    let popup_area = centered_rect(91, 70, frame.area(), used_area);
+pub fn render_help_popup(frame: &mut Frame, used_height: u16, theme: &Theme, layout: LayoutType, scroll_state: &mut ScrollStates) {
+    let (x_percent, y_percent) = if layout == LayoutType::Horizontal {
+        (92,86)
+    } else {
+        (94,92)
+    };
+
+    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
+    let max_width = (popup_area.width as usize).saturating_sub(4);
 
     frame.render_widget(Clear, popup_area);
 
-    let explanation = Text::from(vec![
-        TLine::from("Grade:"),
-        TLine::from(" Kyōiku: kanji taught during the six years of elementary school"),
-        TLine::from(
-            " Jōyō: Kyōiku kanji plus the remaining (total 2136), to be learned by the end of high school",
+    let mut lines = Vec::new();
+
+    let help_sections = vec![
+        ("Grade:", ""),
+        (
+            " Kyōiku:",
+            "kanji taught during the six years of elementary school",
         ),
-        TLine::from(
-            " Jinmeiyō: kanji approved to be used in family name, registers and other official documents",
+        (
+            " Jōyō:",
+            "Kyōiku kanji plus the remaining (total 2136), to be learned by the end of high school",
         ),
-        TLine::from(
-            " Hyōgai: kanji that fall outside of the list Jōyō + Jinmeiyō, are very rare or old",
+        (
+            " Jinmeiyō:",
+            "kanji approved to be used in family name, registers and other official documents",
         ),
-        TLine::from(""),
-        TLine::from(
+        (
+            " Hyōgai:",
+            "kanji that fall outside of the list Jōyō + Jinmeiyō, are very rare or old",
+        ),
+        ("", ""),
+        (
+            "",
             "The radical is the core component of a kanji, it shares its meaning and it used to classify it",
         ),
-        TLine::from(
+        (
+            "",
             "The rank expresses the relative frequency of occurrence of a kanji in modern Japanese",
         ),
-        TLine::from("Kanji variants (異体字), are alternative graphical forms of the same kanji"),
-        TLine::from("Compounds section is a list of kanji used inside the current kanji"),
-        TLine::from(
+        (
+            "",
+            "Kanji variants (異体字), are alternative graphical forms of the same kanji",
+        ),
+        (
+            "",
+            "Compounds section is a list of kanji used inside the current kanji",
+        ),
+        (
+            "",
             "Onyomi is the Chinese reading of a kanji, often used for words made of multiple kanji",
         ),
-        TLine::from("Kunyomi is the native Japanese reading, primarly used for kanji used alone"),
-        TLine::from("Nanori is the reading used almost exclusively in Japanese proper names"),
-        TLine::from("Used in section is a list of kanji containg the current kanji"),
-    ]);
+        (
+            "",
+            "Kunyomi is the native Japanese reading, primarly used for kanji used alone",
+        ),
+        (
+            "",
+            "Nanori is the reading used almost exclusively in Japanese proper names",
+        ),
+        (
+            "",
+            "Used in section is a list of kanji containg the current kanji",
+        ),
+    ];
 
-    let help_widget =
-        Paragraph::new(explanation)
-        .block(base_layout_block("Details", theme))
+    for (prefix, text) in help_sections {
+        if text.is_empty() {
+            lines.push(TLine::from(prefix.to_string()));
+        } else if text.is_empty() && prefix.is_empty() {
+            lines.push(TLine::raw(""));
+        } else {
+            let options =
+                textwrap::Options::new(max_width.saturating_sub(prefix.len())).break_words(false);
+
+            let wrapped = textwrap::fill(text, &options);
+            let padding = " ".repeat(prefix.len());
+
+            for (idx, sub_line) in wrapped.lines().enumerate() {
+                let line_prefix = if idx == 0 { prefix } else { &padding };
+                lines.push(TLine::from(format!("{}{}", line_prefix, sub_line)));
+            }
+        }
+    }
+
+    let inner_height = popup_area.height.saturating_sub(2);
+    let total_lines = lines.len() as u16;
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    let clamped_offset = scroll_state.popup_offset.min(max_scroll);
+    scroll_state.popup_offset = clamped_offset;
+
+    let help_widget = Paragraph::new(lines)
+        .block(base_layout_block("Details", theme)
+            .padding(Padding::ZERO))
+        .scroll((clamped_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(help_widget, popup_area);
 }
 
-pub fn render_keys_popup(frame: &mut Frame, used_area: u16, theme: &Theme) {
-    let popup_area = centered_rect(95, 92, frame.area(), used_area);
+pub fn render_keys_popup(frame: &mut Frame, used_height: u16, theme: &Theme, layout: LayoutType,scroll_state: &mut ScrollStates) {
+    let (x_percent, y_percent) = if layout == LayoutType::Horizontal {
+        (96, 92)
+    } else {
+        (95, 96)
+    };
+    
+    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
 
-    let [left, right] = Layout::horizontal(
-        [Constraint::Percentage(53), Constraint::Fill(47)])
-            .spacing(0)
-            .areas(popup_area);
+    let [left, right] = Layout::horizontal([Constraint::Percentage(53), Constraint::Fill(47)])
+        .spacing(0)
+        .areas(popup_area);
 
     frame.render_widget(Clear, popup_area);
 
-    let kanji_keys = Text::from(vec![
-        TLine::from("d: open/close description popup"),
-        TLine::from("s: open/close search popup"),
-        TLine::from("k: open/close key mapping popup"),
-        TLine::from("h: open/close jumps history popup"),
-        TLine::from("right arrow: next kanji in current search"),
-        TLine::from("left arrow: previous kanji in current search"),
-        TLine::from("up arrow: current kanji next stroke"),
-        TLine::from("down arrow: current kanji previous stroke"),
-        TLine::from("o: play strokes animation from the beginning"),
-        TLine::from("e: end strokes animation"),
-        TLine::from("p: pause/resume strokes animation"),
-        TLine::from("t: switch theme Original/Cyberpunk"),
-        TLine::from("q: quit the app"),
-        TLine::from("r: jump to current kanji's radical"),
-        TLine::from("Tab: switch between compunds and used in selection"),
-        TLine::from("Enter: jump to the selected compunds or used in"),
-        TLine::from("Esc: close any pop up"),
-        TLine::from("]: move to the next element of the selection"),
-        TLine::from("[: move to the previous element of the selection"),
-    ]);
+    let wrap_lines = |raw_lines: &[&str], width: u16| -> Vec<TLine> {
+        let max_width = (width as usize).saturating_sub(2);
+        if max_width == 0 {
+            return vec![];
+        }
+        let options = textwrap::Options::new(max_width).break_words(false);
 
-    let kanji_keys_widget =
-        Paragraph::new(kanji_keys)
+        let mut lines = Vec::new();
+        for text in raw_lines {
+            let wrapped = textwrap::fill(text, &options);
+            for sub_line in wrapped.lines() {
+                lines.push(TLine::from(sub_line.to_string()));
+            }
+        }
+        lines
+    };
+
+    let kanji_keys_raw = vec![
+        "d: open/close description popup",
+        "s: open/close search popup",
+        "k: open/close key mapping popup",
+        "h: open/close jumps history popup",
+        "right arrow: next kanji in current search",
+        "left arrow: previous kanji in current search",
+        "up arrow: current kanji next stroke",
+        "down arrow: current kanji previous stroke",
+        "o: play strokes animation from the beginning",
+        "e: end strokes animation",
+        "p: pause/resume strokes animation",
+        "t: switch theme Original/Cyberpunk",
+        "q: quit the app",
+        "r: jump to current kanji's radical",
+        "Tab: switch between compunds and used in selection",
+        "Enter: jump to the selected compunds or used in",
+        "Esc: close any pop up",
+        "] : move to the next element of the selection",
+        "[ : move to the previous element of the selection",
+    ];
+
+    let search_keys_raw = vec![
+        "Space: [un]toggle selection",
+        "Enter: submit filters and start the search",
+        "Esc: close search popup",
+        ">: switch to radicals search",
+        "<: switch to normal search",
+        "While editing a custom search field:",
+        "  - any alphanumeric key is used for editing",
+        "  - Esc: stop the editing",
+        "  - Tab: switch to the next editable field",
+        "  - right arrow: move the cursor to the left",
+        "  - left arrow: move the cursor to the right",
+        "  - Backspace: delete on the left of the cursor",
+        "  - Delete: delete on the right of the cursor",
+        "  - Enter: submit filters and start the search",
+    ];
+
+    let kanji_lines = wrap_lines(&kanji_keys_raw, left.width);
+    let search_lines = wrap_lines(&search_keys_raw, right.width);
+
+    let left_inner_height = left.height.saturating_sub(2);
+    let left_max_scroll = (kanji_lines.len() as u16).saturating_sub(left_inner_height);
+
+    let right_inner_height = right.height.saturating_sub(2);
+    let right_max_scroll = (search_lines.len() as u16).saturating_sub(right_inner_height);
+
+    let max_scroll = left_max_scroll.max(right_max_scroll);
+
+    scroll_state.popup_offset = scroll_state.popup_offset.min(max_scroll);
+
+    let kanji_keys_widget = Paragraph::new(kanji_lines)
         .block(base_layout_block("Kanji view", theme)
-        .border_type(BorderType::Plain))
+            .padding(Padding::ZERO)
+            .border_type(BorderType::Plain))
+        .scroll((scroll_state.popup_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(kanji_keys_widget, left);
 
-    let search_keys = Text::from(vec![
-        TLine::from("Space: [un]toggle selection"),
-        TLine::from("Enter: submit filters and start the search"),
-        TLine::from("Esc: close search popup"),
-        TLine::from(">: switch to radicals search"),
-        TLine::from("<: switch to normal search"),
-        TLine::from("While editing a custom search field:"),
-        TLine::from("any alphanumeric key is used for editing"),
-        TLine::from("Esc: stop the editing"),
-        TLine::from("Tab: switch to the next editable field"),
-        TLine::from("right arrow: move the cursor to the left"),
-        TLine::from("left arrow: move the cursor to the right"),
-        TLine::from("Backspace: delete on the left of the cursor"),
-        TLine::from("Delete: delete on the right of the cursor"),
-        TLine::from("Enter: submit filters and start the search"),
-    ]);
-
-    let search_keys_widget =
-        Paragraph::new(search_keys)
+    let search_keys_widget = Paragraph::new(search_lines)
         .block(base_layout_block("Search view", theme)
-        .border_type(BorderType::Plain))
+            .padding(Padding::ZERO)
+            .border_type(BorderType::Plain))
+        .scroll((scroll_state.popup_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(search_keys_widget, right);
 }
 
-pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, theme: &Theme) {
-    let popup_area = centered_rect(91, 70, frame.area(), used_area);
+pub fn render_search_form(
+    frame: &mut Frame,
+    used_height: u16,
+    form: &SearchForm,
+    theme: &Theme,
+    layout: LayoutType,
+) {
+    let (x_percent, y_percent, chunk_size) = if layout == LayoutType::Horizontal {
+        (62, 48, 2)
+    } else {
+        (79, 48, 3)
+    };
+    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
     frame.render_widget(Clear, popup_area);
 
     let popup_block = Block::default()
@@ -693,11 +939,11 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, 
     frame.render_widget(popup_block, popup_area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(2), // JLPT
-        Constraint::Length(2), // Grade
-        Constraint::Length(2), // Strokes
-        Constraint::Length(2), // Rank
-        Constraint::Length(1), // Query
+        Constraint::Length(chunk_size), // JLPT
+        Constraint::Length(chunk_size), // Grade
+        Constraint::Length(2),          // Strokes
+        Constraint::Length(2),          // Rank
+        Constraint::Length(1),          // Query
     ])
     .split(inner_area);
 
@@ -706,7 +952,6 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, 
         " JLPT Level: ",
         Style::default().fg(theme.rtext),
     )];
-
     let jlpt_items: Vec<Span> = (1..=6)
         .enumerate()
         .flat_map(|(idx, n)| {
@@ -750,13 +995,28 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, 
         })
         .collect();
 
-    jlpt_spans.extend(jlpt_items);
+    if layout == LayoutType::Horizontal {
+        jlpt_spans.extend(jlpt_items);
+        let jlpt_widget = Paragraph::new(TLine::from(jlpt_spans));
+        frame.render_widget(jlpt_widget, chunks[0]);
+    } else {
+        let split_idx = 9;
+        let mut jlpt_line1_spans = jlpt_spans.clone();
+        jlpt_line1_spans.extend(jlpt_items[..split_idx].iter().cloned());
 
-    let jlpt_widget = Paragraph::new(TLine::from(jlpt_spans));
-    frame.render_widget(jlpt_widget, chunks[0]);
+        let mut jlpt_line2_spans = vec![Span::styled("             ", Style::default())];
+        jlpt_line2_spans.extend(jlpt_items[split_idx..].iter().cloned());
+
+        let jlpt_widget = Paragraph::new(vec![
+            TLine::from(jlpt_line1_spans),
+            TLine::from(jlpt_line2_spans),
+        ]);
+        frame.render_widget(jlpt_widget, chunks[0]);
+    };
 
     //Grade
     let mut grade_spans = vec![Span::styled(" Grade: ", Style::default().fg(theme.rtext))];
+
     let grade_items: Vec<Span> = KanjiGrade::descs()
         .into_iter()
         .flat_map(|(r, d, idx)| {
@@ -794,10 +1054,25 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, 
         })
         .collect();
 
-    grade_spans.extend(grade_items);
+    if layout == LayoutType::Horizontal {
+        grade_spans.extend(grade_items);
 
-    let grade_widget = Paragraph::new(TLine::from(grade_spans));
-    frame.render_widget(grade_widget, chunks[1]);
+        let grade_widget = Paragraph::new(TLine::from(grade_spans));
+        frame.render_widget(grade_widget, chunks[1]);
+    } else {
+        let split_idx = 11;
+        let mut grade_line1_spans = grade_spans.clone();
+        grade_line1_spans.extend(grade_items[..split_idx].iter().cloned());
+
+        let mut grade_line2_spans = vec![Span::styled("        ", Style::default())];
+        grade_line2_spans.extend(grade_items[split_idx..].iter().cloned());
+
+        let grade_widget = Paragraph::new(vec![
+            TLine::from(grade_line1_spans),
+            TLine::from(grade_line2_spans),
+        ]);
+        frame.render_widget(grade_widget, chunks[1]);
+    };
 
     //Strokes
     let (min_stroke, max_stroke) = format_range(form.draft.strokes.as_ref());
@@ -877,14 +1152,21 @@ pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, 
 
 pub fn render_search_rad_form(
     frame: &mut Frame,
-    used_area: u16,
+    used_height: u16,
     form: &mut SearchForm,
     theme: &Theme,
+    layout: LayoutType,
 ) {
-    let popup_area = centered_rect(91, 57, frame.area(), used_area);
+    let y_percent = if layout == LayoutType::Horizontal {
+        58
+    } else {
+        79
+    };
+    let popup_area = centered_rect(91, y_percent, frame.area(), used_height);
     frame.render_widget(Clear, popup_area);
 
     let popup_block = Block::default()
+        .padding(Padding::ZERO)
         .style(Style::default().bg(theme.bg))
         .title_style(Style::default().fg(theme.btitle))
         .title("Radical filter")
@@ -941,9 +1223,7 @@ pub fn render_search_rad_form(
     let grid_paragraph = Paragraph::new(lines);
 
     let vertical_chunks = Layout::vertical([
-        Constraint::Fill(1),
         Constraint::Length(grid_height.min(inner_area.height)),
-        Constraint::Fill(1),
     ])
     .split(inner_area);
 
@@ -952,21 +1232,21 @@ pub fn render_search_rad_form(
         Constraint::Length(grid_width.min(inner_area.width)),
         Constraint::Fill(1),
     ])
-    .split(vertical_chunks[1])[1];
+    .split(vertical_chunks[0])[1];
 
     frame.render_widget(grid_paragraph, grid_area);
 }
 
 pub fn render_no_kanji(frame: &mut Frame, theme: &Theme) {
-    let [view] = Layout::vertical([Constraint::Length(22)])
-        .spacing(0)
-        .areas(frame.area());
-    let block = base_layout_block("", theme).padding(Padding::ZERO);
+    let paragraph = Paragraph::new(NO_RESULT)
+        .style(Style::default().fg(theme.kanji_stroke_old))
+        .alignment(Alignment::Center)
+        .block(base_layout_block("", theme).padding(Padding::uniform(0)));
 
-    frame.render_widget(block, view);
+    frame.render_widget(paragraph, frame.area());
 }
 
-pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme) {
+pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme, layout: &LayoutType) {
     let target_area: Rect = Rect {
         x: frame.area().x,
         y: frame.area().y,
@@ -976,7 +1256,7 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
 
     let [_, history_area, title_area] = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Percentage(4),
+        Constraint::Length(4),
         Constraint::Length(2),
     ])
     .areas(target_area);
@@ -1027,57 +1307,88 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect, used_height: u16) -> R
         height: r.height.min(used_height),
     };
     let popup_layout = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Fill(1),
+        Constraint::Length((used_height * percent_y)/100),
+        Constraint::Fill(1),
     ])
     .split(effective_r);
 
     Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Fill(1),
+        Constraint::Length((r.width * percent_x)/100),
+        Constraint::Fill(1),
     ])
     .split(popup_layout[1])[1]
 }
 
-fn calc_field_lines(text: &str, target_width: usize) -> usize {
-    if text.is_empty() || target_width == 0 {
-        return 1;
+pub fn calc_details_height(kanji: &KanjiData, area_width: u16) -> u16 {
+    let area_width = area_width as usize;
+    if area_width <= 2 {
+        return 12;
     }
-    let options = Options::new(target_width).break_words(false);
-    textwrap::wrap(text, &options).len().max(1)
-}
 
-fn calc_details_height(curr_kanji: &KanjiData, area_width: u16) -> u16 {
-    let inner_width = (area_width as usize).saturating_sub(4);
+    let dec_title = "Compounds:";
+    let on_title = "Onyomi:";
+    let kun_title = "Kunyomi:";
+    let nano_title = "Nanori:";
+    let mean_title = "Meanings:";
 
-    let dec_text = curr_kanji
-        .decomposition
-        .iter()
-        .map(|c| c.to_string())
-        .collect::<Vec<_>>()
-        .join(" + ");
+    let decomp_line_count = if kanji.decomposition.is_empty() {
+        1
+    } else {
+        let max_width = area_width.saturating_sub(2);
+        let indent_width = dec_title.len() + 2;
+        let title_text_len = dec_title.len() + 2; // " Compounds: "
 
-    let dec_lines = calc_field_lines(&dec_text, inner_width.saturating_sub("Compounds: ".len()));
-    let on_lines = calc_field_lines(
-        &curr_kanji.onyomi.join(", "),
-        inner_width.saturating_sub("Onyomi: ".len()),
-    );
-    let kun_lines = calc_field_lines(
-        &curr_kanji.kunyomi.join(", "),
-        inner_width.saturating_sub("Kunyomi: ".len()),
-    );
-    let nano_lines = calc_field_lines(
-        &curr_kanji.nanori.join(", "),
-        inner_width.saturating_sub("Nanori: ".len()),
-    );
-    let mean_lines = calc_field_lines(
-        &curr_kanji.meanings.join(", "),
-        inner_width.saturating_sub("Meanings: ".len()),
-    );
+        let mut current_width = title_text_len;
+        let mut lines_count = 1;
+        let last_idx = kanji.decomposition.len().saturating_sub(1);
 
-    let total_text_lines = dec_lines + on_lines + kun_lines + nano_lines + mean_lines;
+        for (idx, n) in kanji.decomposition.iter().enumerate() {
+            let elem_text = format!(" {} ", n);
+            let sep_text = if idx < last_idx { "+" } else { "" };
+            let item_width = elem_text.len() + sep_text.len();
 
-    (total_text_lines + 6) as u16
+            if current_width + item_width > max_width {
+                lines_count += 1;
+                current_width = indent_width;
+            }
+            current_width += item_width;
+        }
+        lines_count
+    };
+
+    let calc_field_lines = |items: &[String], title_len: usize| -> usize {
+        if items.is_empty() {
+            1
+        } else {
+            let max_length = area_width.saturating_sub(2 + 2 + title_len);
+            let options = Options::new(max_length).break_words(false);
+            textwrap::fill(&items.join(", "), &options).lines().count()
+        }
+    };
+
+    let onyomi_lines = calc_field_lines(&kanji.onyomi, on_title.len());
+    let kunyomi_lines = calc_field_lines(&kanji.kunyomi, kun_title.len());
+    let meanings_lines = calc_field_lines(&kanji.meanings, mean_title.len());
+
+    let title_len = nano_title.len();
+    let prefix_cols = 1 + (title_len + 1) + 1;
+    let text_width = area_width.saturating_sub(prefix_cols + 2);
+
+    let nanori_lines = if kanji.nanori.is_empty() {
+        1
+    } else if text_width > 0 {
+        let options = textwrap::Options::new(text_width).break_words(false);
+        textwrap::fill(&kanji.nanori.join(", "), &options)
+            .lines()
+            .count()
+    } else {
+        1
+    };
+
+    let total_text_lines =
+        decomp_line_count + 1 + onyomi_lines + kunyomi_lines + nanori_lines + 1 + meanings_lines;
+
+    (total_text_lines + 4) as u16
 }
