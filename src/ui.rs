@@ -605,9 +605,77 @@ pub fn render_help_popup(frame: &mut Frame, used_area: u16, theme: &Theme) {
     ]);
 
     let help_widget =
-        Paragraph::new(explanation).block(Block::default().title("Details").borders(Borders::ALL));
+        Paragraph::new(explanation)
+        .block(base_layout_block("Details", theme))
+        .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(help_widget, popup_area);
+}
+
+pub fn render_keys_popup(frame: &mut Frame, used_area: u16, theme: &Theme) {
+    let popup_area = centered_rect(95, 92, frame.area(), used_area);
+
+    let [left, right] = Layout::horizontal(
+        [Constraint::Percentage(53), Constraint::Fill(47)])
+            .spacing(0)
+            .areas(popup_area);
+
+    frame.render_widget(Clear, popup_area);
+
+    let kanji_keys = Text::from(vec![
+        TLine::from("d: open/close description popup"),
+        TLine::from("s: open/close search popup"),
+        TLine::from("k: open/close key mapping popup"),
+        TLine::from("h: open/close jumps history popup"),
+        TLine::from("right arrow: next kanji in current search"),
+        TLine::from("left arrow: previous kanji in current search"),
+        TLine::from("up arrow: current kanji next stroke"),
+        TLine::from("down arrow: current kanji previous stroke"),
+        TLine::from("o: play strokes animation from the beginning"),
+        TLine::from("e: end strokes animation"),
+        TLine::from("p: pause/resume strokes animation"),
+        TLine::from("t: switch theme Original/Cyberpunk"),
+        TLine::from("q: quit the app"),
+        TLine::from("r: jump to current kanji's radical"),
+        TLine::from("Tab: switch between compunds and used in selection"),
+        TLine::from("Enter: jump to the selected compunds or used in"),
+        TLine::from("Esc: close any pop up"),
+        TLine::from("]: move to the next element of the selection"),
+        TLine::from("[: move to the previous element of the selection"),
+    ]);
+
+    let kanji_keys_widget =
+        Paragraph::new(kanji_keys)
+        .block(base_layout_block("Kanji view", theme)
+        .border_type(BorderType::Plain))
+        .style(Style::default().fg(theme.rtext));
+
+    frame.render_widget(kanji_keys_widget, left);
+
+    let search_keys = Text::from(vec![
+        TLine::from("Space: [un]toggle selection"),
+        TLine::from("Enter: submit filters and start the search"),
+        TLine::from("Esc: close search popup"),
+        TLine::from(">: switch to radicals search"),
+        TLine::from("<: switch to normal search"),
+        TLine::from("While editing a custom search field:"),
+        TLine::from("any alphanumeric key is used for editing"),
+        TLine::from("Esc: stop the editing"),
+        TLine::from("Tab: switch to the next editable field"),
+        TLine::from("right arrow: move the cursor to the left"),
+        TLine::from("left arrow: move the cursor to the right"),
+        TLine::from("Backspace: delete on the left of the cursor"),
+        TLine::from("Delete: delete on the right of the cursor"),
+        TLine::from("Enter: submit filters and start the search"),
+    ]);
+
+    let search_keys_widget =
+        Paragraph::new(search_keys)
+        .block(base_layout_block("Search view", theme)
+        .border_type(BorderType::Plain))
+        .style(Style::default().fg(theme.rtext));
+
+    frame.render_widget(search_keys_widget, right);
 }
 
 pub fn render_search_form(frame: &mut Frame, used_area: u16, form: &SearchForm, theme: &Theme) {

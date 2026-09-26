@@ -23,6 +23,7 @@ pub enum ActivePopup {
     Nope,
     Help,
     History,
+    Mapping,
 }
 
 #[derive(PartialEq)]
@@ -300,6 +301,13 @@ impl<'a> App<'a> {
                     current_theme,
                 );
             }
+            ActivePopup::Mapping => {
+                render_keys_popup(
+                    frame,
+                    layout.canvas.height + layout.details.height,
+                    current_theme,
+                );
+            }
             ActivePopup::Nope => {}
         }
     }
@@ -409,7 +417,10 @@ impl<'a> App<'a> {
                         _ => ActivePopup::History,
                     };
                 }
-                KeyCode::Esc => self.reset_jump(),
+                KeyCode::Esc => {
+                    self.reset_jump();
+                    self.active_popup = ActivePopup::Nope;
+                },
                 KeyCode::Char('[') => self.move_left(),
                 KeyCode::Char(']') => self.move_right(),
                 KeyCode::Enter => {
@@ -427,7 +438,13 @@ impl<'a> App<'a> {
                         _ => ActivePopup::Help,
                     };
                 }
-                KeyCode::Char('k') => self.anim_state.is_finished = true,
+                KeyCode::Char('e') => self.anim_state.is_finished = true,
+                KeyCode::Char('k') => {
+                    self.active_popup = match self.active_popup {
+                        ActivePopup::Mapping => ActivePopup::Nope,
+                        _ => ActivePopup::Mapping,
+                    };
+                }
                 KeyCode::Char('r') => {
                     self.reset_jump();
                     self.show_current_radical();
