@@ -73,6 +73,7 @@ pub struct App<'a> {
     pub jump_selected: JumpElement,
     pub selected_theme: ThemeMode,
     pub scroll_states: ScrollStates,
+    pub is_anomaly: bool,
 
     pub compounds_state: ListState,
     pub anim_state: KanjiAnimState,
@@ -98,6 +99,7 @@ impl<'a> App<'a> {
             jump_selected: JumpElement::None,
             selected_theme: ThemeMode::Original,
             scroll_states: ScrollStates::default(),
+            is_anomaly: false,
         }
     }
 
@@ -282,15 +284,20 @@ impl<'a> App<'a> {
 
     //Draws the UI
     fn render(&mut self, frame: &mut Frame) {
-        
+        self.is_anomaly = false;
+        let current_theme = &self.current_theme();
         let layout = define_layout(frame.area(), self.current_kanji());
+        if layout.is_none() {
+            self.is_anomaly = true;
+            render_too_small(frame, current_theme);
+            return;
+        }
         let current_kanji = if self.jump_history.items.is_empty() {
             self.search_results.get(self.current_kanji).copied()
         } else {
             self.repo.get_by_kanji(self.jump_history.current())
         };
         let current_radical = self.current_radical();
-        let current_theme = &self.current_theme();
 
         if let Some(kanji) = current_kanji
             && let Some(layout) = layout
@@ -301,7 +308,7 @@ impl<'a> App<'a> {
                 layout.radical,
                 current_radical,
                 current_theme,
-            &mut self.scroll_states,
+                &mut self.scroll_states,
             );
             render_stats_section(frame, layout.stats, kanji, current_theme);
             render_details_section(frame, layout.details, kanji, self);
@@ -327,7 +334,13 @@ impl<'a> App<'a> {
                     } else {
                         (layout.canvas.height * 2) + layout.details.height
                     };
-                    render_help_popup(frame, used_height, current_theme, layout.layout_type, &mut self.scroll_states)
+                    render_help_popup(
+                        frame,
+                        used_height,
+                        current_theme,
+                        layout.layout_type,
+                        &mut self.scroll_states,
+                    )
                 }
                 ActivePopup::Search => {
                     if let Some(search_form) = &self.search_form {
@@ -352,22 +365,22 @@ impl<'a> App<'a> {
                         } else {
                             (layout.canvas.height * 2) + layout.details.height
                         };
-                        render_search_rad_form(frame, used_height, search_form, current_theme, layout.layout_type);
+                        render_search_rad_form(
+                            frame,
+                            used_height,
+                            search_form,
+                            current_theme,
+                            layout.layout_type,
+                        );
                     }
                 }
                 ActivePopup::History => {
                     let used_height = if layout.layout_type == LayoutType::Horizontal {
-                            layout.canvas.height + layout.details.height
-                        } else {
-                            (layout.canvas.height * 2) + layout.details.height
-                        };
-                    render_history_popup(
-                        frame,
-                        &self.jump_history,
-                        used_height,
-                        current_theme,
-                        &layout.layout_type,
-                    );
+                        layout.canvas.height + layout.details.height
+                    } else {
+                        (layout.canvas.height * 2) + layout.details.height
+                    };
+                    render_history_popup(frame, &self.jump_history, used_height, current_theme);
                 }
                 ActivePopup::Mapping => {
                     let used_height = if layout.layout_type == LayoutType::Horizontal {
@@ -375,12 +388,19 @@ impl<'a> App<'a> {
                     } else {
                         (layout.canvas.height * 2) + layout.details.height
                     };
-                    render_keys_popup(frame, used_height, current_theme, layout.layout_type,&mut self.scroll_states);
+                    render_keys_popup(
+                        frame,
+                        used_height,
+                        current_theme,
+                        layout.layout_type,
+                        &mut self.scroll_states,
+                    );
                 }
                 ActivePopup::Nope => {}
             }
         } else {
-            render_no_kanji(frame, current_theme)
+            self.is_anomaly = true;
+            render_no_results(frame, current_theme);
         }
     }
 
@@ -470,128 +490,148 @@ impl<'a> App<'a> {
                 }
             }
         } else {
-            match key.code {
-                KeyCode::Char(' ') => {
-                    self.scroll_states.curr_selected = match self.scroll_states.curr_selected {
-                        ScrollElem::None | ScrollElem::Details => ScrollElem::Radical,
-                        _=> ScrollElem::Details,
+            if self.is_anomaly || self.search_results.is_empty() {
+                match key.code {
+                    KeyCode::Char('q') => self.should_quit = true,
+                    KeyCode::Esc if self.search_results.is_empty() => {
+                        self.is_anomaly = false;
+                        self.active_search = SearchCriteria::default();
+                        self.search_results = self.repo.search(&SearchCriteria::default());
                     }
-                },
-                KeyCode::Char('-') => {
-                    if self.active_popup == ActivePopup::Help ||
-                        self.active_popup == ActivePopup::Mapping {
-                            self.scroll_states.popup_offset = 
+                    _ => {},
+                }
+            } else {
+                match key.code {
+                    KeyCode::Char(' ') => {
+                        self.scroll_states.curr_selected = match self.scroll_states.curr_selected {
+                            ScrollElem::None | ScrollElem::Details => ScrollElem::Radical,
+                            _ => ScrollElem::Details,
+                        }
+                    }
+                    KeyCode::Char('-') => {
+                        if self.active_popup == ActivePopup::Help
+                            || self.active_popup == ActivePopup::Mapping
+                        {
+                            self.scroll_states.popup_offset =
                                 self.scroll_states.popup_offset.saturating_sub(1);
-                    }
-                    else {
-                        match self.scroll_states.curr_selected {
-                        ScrollElem::Radical => self.scroll_states.rad_offset = 
-                            self.scroll_states.rad_offset.saturating_sub(1),
-                        ScrollElem::Details => self.scroll_states.details_offset =
-                            self.scroll_states.details_offset.saturating_sub(1),
-                        _=> {},
+                        } else {
+                            match self.scroll_states.curr_selected {
+                                ScrollElem::Radical => {
+                                    self.scroll_states.rad_offset =
+                                        self.scroll_states.rad_offset.saturating_sub(1)
+                                }
+                                ScrollElem::Details => {
+                                    self.scroll_states.details_offset =
+                                        self.scroll_states.details_offset.saturating_sub(1)
+                                }
+                                _ => {}
+                            }
                         }
                     }
-                },
-                KeyCode::Char('+') => {
-                    if self.active_popup == ActivePopup::Help ||
-                        self.active_popup == ActivePopup::Mapping {
-                            self.scroll_states.popup_offset = 
+                    KeyCode::Char('+') => {
+                        if self.active_popup == ActivePopup::Help
+                            || self.active_popup == ActivePopup::Mapping
+                        {
+                            self.scroll_states.popup_offset =
                                 self.scroll_states.popup_offset.saturating_add(1);
-                    }
-                    else {
-                        match self.scroll_states.curr_selected {
-                        ScrollElem::Radical => self.scroll_states.rad_offset = 
-                            self.scroll_states.rad_offset.saturating_add(1),
-                        ScrollElem::Details => self.scroll_states.details_offset =
-                            self.scroll_states.details_offset.saturating_add(1),
-                        _=> {},
+                        } else {
+                            match self.scroll_states.curr_selected {
+                                ScrollElem::Radical => {
+                                    self.scroll_states.rad_offset =
+                                        self.scroll_states.rad_offset.saturating_add(1)
+                                }
+                                ScrollElem::Details => {
+                                    self.scroll_states.details_offset =
+                                        self.scroll_states.details_offset.saturating_add(1)
+                                }
+                                _ => {}
+                            }
                         }
                     }
-                },
-                KeyCode::Tab => {
-                    self.jump_selected = match self.jump_selected {
-                        JumpElement::Compounds(_) => {
-                            self.compounds_state.select(Some(0));
-                            JumpElement::UsedIn(0)
-                        }
-                        _ => {
-                            self.compounds_state.select(None);
-                            JumpElement::Compounds(0)
+                    KeyCode::Tab => {
+                        self.jump_selected = match self.jump_selected {
+                            JumpElement::Compounds(_) => {
+                                self.compounds_state.select(Some(0));
+                                JumpElement::UsedIn(0)
+                            }
+                            _ => {
+                                self.compounds_state.select(None);
+                                JumpElement::Compounds(0)
+                            }
                         }
                     }
+                    KeyCode::Char('h') => {
+                        self.scroll_states.reset();
+                        self.active_popup = match self.active_popup {
+                            ActivePopup::History => ActivePopup::Nope,
+                            _ => ActivePopup::History,
+                        };
+                    }
+                    KeyCode::Esc => {
+                        self.scroll_states.curr_selected = ScrollElem::None;
+                        self.reset_jump();
+                        self.active_popup = ActivePopup::Nope;
+                    }
+                    KeyCode::Char('[') => self.move_left(),
+                    KeyCode::Char(']') => self.move_right(),
+                    KeyCode::Enter => {
+                        self.show_current_jump();
+                        self.reset_jump();
+                    }
+                    KeyCode::Char('s') => {
+                        self.reset_jump();
+                        self.active_popup = ActivePopup::Search;
+                        self.search_form = Some(SearchForm::new(&self.active_search));
+                    }
+                    KeyCode::Char('d') => {
+                        self.scroll_states.reset();
+                        self.active_popup = match self.active_popup {
+                            ActivePopup::Help => ActivePopup::Nope,
+                            _ => ActivePopup::Help,
+                        };
+                    }
+                    KeyCode::Char('e') => self.anim_state.is_finished = true,
+                    KeyCode::Char('k') => {
+                        self.scroll_states.reset();
+                        self.active_popup = match self.active_popup {
+                            ActivePopup::Mapping => ActivePopup::Nope,
+                            _ => ActivePopup::Mapping,
+                        };
+                    }
+                    KeyCode::Char('r') => {
+                        self.scroll_states.reset();
+                        self.reset_jump();
+                        self.show_current_radical();
+                    }
+                    KeyCode::Char('u') => {
+                        self.scroll_states.reset();
+                        self.reset_jump();
+                        self.undo_jump();
+                    }
+                    KeyCode::Char('y') => {
+                        self.scroll_states.reset();
+                        self.reset_jump();
+                        self.redo_jump();
+                    }
+                    KeyCode::Char('q') => self.should_quit = true,
+                    KeyCode::Char('p') => {
+                        self.anim_state.single_stroke_mode = false;
+                        self.anim_state.is_paused = !self.anim_state.is_paused
+                    }
+                    KeyCode::Char('o') => self.anim_state.reset(),
+                    KeyCode::Char('t') => self.switch_theme(),
+                    KeyCode::Up => self.to_next_stroke(),
+                    KeyCode::Down => self.to_prev_stroke(),
+                    KeyCode::Left => {
+                        self.reset_jump();
+                        self.previous_kanji();
+                    }
+                    KeyCode::Right => {
+                        self.reset_jump();
+                        self.next_kanji();
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('h') => {
-                    self.scroll_states.reset();
-                    self.active_popup = match self.active_popup {
-                        ActivePopup::History => ActivePopup::Nope,
-                        _ => ActivePopup::History,
-                    };
-                }
-                KeyCode::Esc => {
-                    self.scroll_states.curr_selected = ScrollElem::None;
-                    self.reset_jump();
-                    self.active_popup = ActivePopup::Nope;
-                }
-                KeyCode::Char('[') => self.move_left(),
-                KeyCode::Char(']') => self.move_right(),
-                KeyCode::Enter => {
-                    self.show_current_jump();
-                    self.reset_jump();
-                }
-                KeyCode::Char('s') => {
-                    self.reset_jump();
-                    self.active_popup = ActivePopup::Search;
-                    self.search_form = Some(SearchForm::new(&self.active_search));
-                }
-                KeyCode::Char('d') => {
-                    self.scroll_states.reset();
-                    self.active_popup = match self.active_popup {
-                        ActivePopup::Help => ActivePopup::Nope,
-                        _ => ActivePopup::Help,
-                    };
-                }
-                KeyCode::Char('e') => self.anim_state.is_finished = true,
-                KeyCode::Char('k') => {
-                    self.scroll_states.reset();
-                    self.active_popup = match self.active_popup {
-                        ActivePopup::Mapping => ActivePopup::Nope,
-                        _ => ActivePopup::Mapping,
-                    };
-                }
-                KeyCode::Char('r') => {
-                    self.scroll_states.reset();
-                    self.reset_jump();
-                    self.show_current_radical();
-                }
-                KeyCode::Char('u') => {
-                    self.scroll_states.reset();
-                    self.reset_jump();
-                    self.undo_jump();
-                }
-                KeyCode::Char('y') => {
-                    self.scroll_states.reset();
-                    self.reset_jump();
-                    self.redo_jump();
-                }
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Char('p') => {
-                    self.anim_state.single_stroke_mode = false;
-                    self.anim_state.is_paused = !self.anim_state.is_paused
-                }
-                KeyCode::Char('o') => self.anim_state.reset(),
-                KeyCode::Char('t') => self.switch_theme(),
-                KeyCode::Up => self.to_next_stroke(),
-                KeyCode::Down => self.to_prev_stroke(),
-                KeyCode::Left => {
-                    self.reset_jump();
-                    self.previous_kanji();
-                }
-                KeyCode::Right => {
-                    self.reset_jump();
-                    self.next_kanji();
-                }
-                _ => {}
             }
         }
     }

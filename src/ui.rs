@@ -23,42 +23,10 @@ use ratatui::{
 use std::io::stdout;
 use textwrap::Options;
 
-const NO_RESULT: &str = r"⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠟⢦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⢷⡄⠈⡓⠢⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠤⠂⢹
-⠈⡷⡄⠈⠲⢤⣈⠻⠉⠛⠉⠉⠁⠒⠖⠉⠉⠉⠒⠶⢦⣤⠴⠒⢉⣡⠴⠀⢀⠏
-⠀⢸⡿⡂⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⣴⡞⠉⠀⢀⣠⡞⠀
-⠀⠀⢙⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠀⠀⢠⡼⡟⠀⠀
-⠀⠀⡼⠋⠀⣤⣀⠀⠀⠀⠀⠀⠈⠐⣂⣄⠀⠀⠀⠀⠀⠀⠀⢀⠀⣰⡟⠁⠀⠀
-⠀⢠⡇⠀⠀⠘⠛⠃⠀⠀⠀⠀⠾⣿⠿⠟⠉⠀⠀⠀⠀⠀⠀⠀⠀⢻⠀⠀⠀⠀
-⠀⢸⡇⢺⡀⠀⢠⡒⠠⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⡀⠀⠀⠸⡇⠀⠀⠀
-⠀⢸⡇⣘⠑⡀⠀⠙⢏⣁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠂⠀⣔⣇⠀⠀⠀
-⠀⢸⡇⡁⠀⢳⣶⣾⣷⣦⣄⣀⡀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀
-⠀⠸⡇⠁⠀⠀⢏⠉⠀⠀⠙⠛⠛⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⡏⠀⠀⠀
-⠀⠀⠯⣀⣈⣀⣈⣐⣲⣄⣄⣤⣴⣆⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣈⣛⡧⠀⠀⠀";
-
-const TOO_SMALL: &str = r"
-------===+=----=---------=----
------=-------=-=---=-==-==-=--
-----------------:---------=-==
--------------:..... :=--=-==--
------------. .-===:.. -=======
---=**++*---.+:==-==.  ========
---+=::------*=+++==:   ++===+=
--+-:-------.+-+:-----  -=-----
-==:-..:::.. .=---:::  .:::=---
--:+...:....  .-:::::......:::-
-::-.... ....  .:::.. .....:..:
--  .. ........ .... ..........
---.----..  ...................
-:-======..   . ...............
-:::::::::..... . ..........:::";
-
 #[derive(PartialEq)]
 pub enum LayoutType {
     Horizontal,
     Vertical,
-    Minimal,
     None,
 }
 pub struct MainLayout {
@@ -70,15 +38,15 @@ pub struct MainLayout {
     pub layout_type: LayoutType,
 }
 
-// Normal, Vertical
 pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainLayout> {
     let top_height: u16 = 10;
     let kanji_width = (top_height.saturating_sub(2) * 2) + 2;
-    let stats_width = 25;
+    let stats_width = 24;
 
-    if area.height < 8 || area.width < kanji_width + stats_width {
+    if (area.height < 24 && area.width < 68) || (area.height < 16 && area.width > 68)
+    || area.width < kanji_width + stats_width {
         None
-    } else if area.width >= kanji_width + (stats_width * 2) {
+    } else if area.width >= 68 {
         define_hlayout(area, cur_kanji)
     } else {
         define_vlayout(area, cur_kanji)
@@ -91,7 +59,8 @@ pub fn define_hlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainL
         .unwrap_or(12);
 
     let [kanji_section, details_section] =
-        Layout::vertical([Constraint::Length(10), Constraint::Length(details_height)])
+        Layout::vertical([Constraint::Length(10),
+             Constraint::Length(details_height)])
             .spacing(0)
             .areas(area);
 
@@ -127,9 +96,9 @@ pub fn define_vlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainL
 
     let [kanji_section, details_section, used_in, _spacer] = Layout::vertical([
         Constraint::Length(8),
-        Constraint::Length(details_height), // Usa direttamente l'altezza calcolata senza tagliarla
+        Constraint::Length(details_height),
         Constraint::Length(8),
-        Constraint::Min(0), // Lo spazio vuoto in eccesso va qui in fondo
+        Constraint::Min(0),
     ])
     .spacing(0)
     .areas(area);
@@ -281,7 +250,7 @@ pub fn render_radical_section(
     theme: &Theme,
     scroll_state: &mut ScrollStates,
 ) {
-    let inner_height = area.height.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(4);
 
     if let Some(rad) = radical {
         let indent = 10 as usize;
@@ -356,8 +325,9 @@ pub fn render_radical_section(
         };
 
         let paragraph = Paragraph::new(lines)
-            .block(base_layout_block("Radical", theme)
-        .border_style(Style::default().fg(border_color)))
+            .block(
+                base_layout_block("Radical", theme).border_style(Style::default().fg(border_color)),
+            )
             .scroll((clamped_offset, 0));
         frame.render_widget(paragraph, area);
     } else {
@@ -378,8 +348,8 @@ pub fn render_radical_section(
 
         let paragraph = Paragraph::new(text_lines)
             .block(
-                base_layout_block("Radical", theme)
-                    .border_style(Style::default().fg(border_color)))
+                base_layout_block("Radical", theme).border_style(Style::default().fg(border_color)),
+            )
             .scroll((clamped_offset, 0));
         frame.render_widget(paragraph, area);
     }
@@ -605,8 +575,10 @@ pub fn render_details_section(frame: &mut Frame, area: Rect, kanji: &KanjiData, 
     };
 
     let paragraph = Paragraph::new(lines)
-        .block(base_layout_block("Reading & Meanings", current_theme)
-            .border_style(Style::default().fg(border_color)))
+        .block(
+            base_layout_block("Reading & Meanings", current_theme)
+                .border_style(Style::default().fg(border_color)),
+        )
         .scroll((clamped_offset, 0));
 
     frame.render_widget(paragraph, area);
@@ -709,11 +681,17 @@ pub fn draw_stroke_points(ctx: &mut Context, points: &[MyPoint], max_points: usi
     }
 }
 
-pub fn render_help_popup(frame: &mut Frame, used_height: u16, theme: &Theme, layout: LayoutType, scroll_state: &mut ScrollStates) {
+pub fn render_help_popup(
+    frame: &mut Frame,
+    used_height: u16,
+    theme: &Theme,
+    layout: LayoutType,
+    scroll_state: &mut ScrollStates,
+) {
     let (x_percent, y_percent) = if layout == LayoutType::Horizontal {
-        (92,86)
+        (92, 86)
     } else {
-        (94,92)
+        (94, 92)
     };
 
     let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
@@ -802,21 +780,26 @@ pub fn render_help_popup(frame: &mut Frame, used_height: u16, theme: &Theme, lay
     scroll_state.popup_offset = clamped_offset;
 
     let help_widget = Paragraph::new(lines)
-        .block(base_layout_block("Details", theme)
-            .padding(Padding::ZERO))
+        .block(base_layout_block("Details", theme).padding(Padding::ZERO))
         .scroll((clamped_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(help_widget, popup_area);
 }
 
-pub fn render_keys_popup(frame: &mut Frame, used_height: u16, theme: &Theme, layout: LayoutType,scroll_state: &mut ScrollStates) {
+pub fn render_keys_popup(
+    frame: &mut Frame,
+    used_height: u16,
+    theme: &Theme,
+    layout: LayoutType,
+    scroll_state: &mut ScrollStates,
+) {
     let (x_percent, y_percent) = if layout == LayoutType::Horizontal {
         (96, 92)
     } else {
         (95, 96)
     };
-    
+
     let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
 
     let [left, right] = Layout::horizontal([Constraint::Percentage(53), Constraint::Fill(47)])
@@ -895,18 +878,22 @@ pub fn render_keys_popup(frame: &mut Frame, used_height: u16, theme: &Theme, lay
     scroll_state.popup_offset = scroll_state.popup_offset.min(max_scroll);
 
     let kanji_keys_widget = Paragraph::new(kanji_lines)
-        .block(base_layout_block("Kanji view", theme)
-            .padding(Padding::ZERO)
-            .border_type(BorderType::Plain))
+        .block(
+            base_layout_block("Kanji view", theme)
+                .padding(Padding::ZERO)
+                .border_type(BorderType::Plain),
+        )
         .scroll((scroll_state.popup_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
     frame.render_widget(kanji_keys_widget, left);
 
     let search_keys_widget = Paragraph::new(search_lines)
-        .block(base_layout_block("Search view", theme)
-            .padding(Padding::ZERO)
-            .border_type(BorderType::Plain))
+        .block(
+            base_layout_block("Search view", theme)
+                .padding(Padding::ZERO)
+                .border_type(BorderType::Plain),
+        )
         .scroll((scroll_state.popup_offset, 0))
         .style(Style::default().fg(theme.rtext));
 
@@ -1222,10 +1209,9 @@ pub fn render_search_rad_form(
 
     let grid_paragraph = Paragraph::new(lines);
 
-    let vertical_chunks = Layout::vertical([
-        Constraint::Length(grid_height.min(inner_area.height)),
-    ])
-    .split(inner_area);
+    let vertical_chunks =
+        Layout::vertical([Constraint::Length(grid_height.min(inner_area.height))])
+            .split(inner_area);
 
     let grid_area = Layout::horizontal([
         Constraint::Fill(1),
@@ -1238,7 +1224,7 @@ pub fn render_search_rad_form(
 }
 
 pub fn render_no_kanji(frame: &mut Frame, theme: &Theme) {
-    let paragraph = Paragraph::new(NO_RESULT)
+    let paragraph = Paragraph::new("NO_RESULT")
         .style(Style::default().fg(theme.kanji_stroke_old))
         .alignment(Alignment::Center)
         .block(base_layout_block("", theme).padding(Padding::uniform(0)));
@@ -1246,7 +1232,7 @@ pub fn render_no_kanji(frame: &mut Frame, theme: &Theme) {
     frame.render_widget(paragraph, frame.area());
 }
 
-pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme, layout: &LayoutType) {
+pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme) {
     let target_area: Rect = Rect {
         x: frame.area().x,
         y: frame.area().y,
@@ -1308,14 +1294,14 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect, used_height: u16) -> R
     };
     let popup_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length((used_height * percent_y)/100),
+        Constraint::Length((used_height * percent_y) / 100),
         Constraint::Fill(1),
     ])
     .split(effective_r);
 
     Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length((r.width * percent_x)/100),
+        Constraint::Length((r.width * percent_x) / 100),
         Constraint::Fill(1),
     ])
     .split(popup_layout[1])[1]
@@ -1338,7 +1324,7 @@ pub fn calc_details_height(kanji: &KanjiData, area_width: u16) -> u16 {
     } else {
         let max_width = area_width.saturating_sub(2);
         let indent_width = dec_title.len() + 2;
-        let title_text_len = dec_title.len() + 2; // " Compounds: "
+        let title_text_len = dec_title.len() + 2;
 
         let mut current_width = title_text_len;
         let mut lines_count = 1;
@@ -1391,4 +1377,70 @@ pub fn calc_details_height(kanji: &KanjiData, area_width: u16) -> u16 {
         decomp_line_count + 1 + onyomi_lines + kunyomi_lines + nanori_lines + 1 + meanings_lines;
 
     (total_text_lines + 4) as u16
+}
+
+pub fn render_no_results(frame: &mut Frame, theme: &Theme) {
+    let area = frame.area();
+
+    let [message_area, _] = Layout::vertical([Constraint::Length(17), Constraint::Fill(1)])
+        .spacing(0)
+        .areas(area);
+
+    let ascii_art = r#"¿¿NOTHING TO SEE HERE??
+⠟⢦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⢷⡄⠈⡓⠢⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠤⠂⢹
+⠈⡷⡄⠈⠲⢤⣈⠻⠉⠛⠉⠉⠁⠒⠖⠉⠉⠉⠒⠶⢦⣤⠴⠒⢉⣡⠴⠀⢀⠏
+⠀⢸⡿⡂⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⣴⡞⠉⠀⢀⣠⡞⠀
+⠀⠀⢙⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠀⠀⢠⡼⡟⠀⠀
+⠀⠀⡼⠋⠀⣤⣀⠀⠀⠀⠀⠀⠈⠐⣂⣄⠀⠀⠀⠀⠀⠀⠀⢀⠀⣰⡟⠁⠀⠀
+⠀⢠⡇⠀⠀⠘⠛⠃⠀⠀⠀⠀⠾⣿⠿⠟⠉⠀⠀⠀⠀⠀⠀⠀⠀⢻⠀⠀⠀⠀
+⠀⢸⡇⢺⡀⠀⢠⡒⠠⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⡀⠀⠀⠸⡇⠀⠀⠀
+⠀⢸⡇⣘⠑⡀⠀⠙⢏⣁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠂⠀⣔⣇⠀⠀⠀
+⠀⢸⡇⡁⠀⢳⣶⣾⣷⣦⣄⣀⡀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀
+⠀⠸⡇⠁⠀⠀⢏⠉⠀⠀⠙⠛⠛⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⡏⠀⠀⠀
+⠀⠀⠯⣀⣈⣀⣈⣐⣲⣄⣄⣤⣴⣆⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣈⣛⡧⠀⠀
+
+<PRESS ESC TO EXIT>"#;
+
+    let paragraph = Paragraph::new(ascii_art)
+        .block(base_layout_block("", theme).padding(Padding::ZERO))
+        .style(Style::default().fg(theme.kanji_stroke_old))
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, message_area);
+}
+
+pub fn render_too_small(frame: &mut Frame, theme: &Theme) {
+    let area = frame.area();
+
+    let [message_area, _] = Layout::vertical([Constraint::Length(12),
+        Constraint::Fill(1)])
+        .spacing(0)
+        .areas(area);
+    let [constraint, _] = Layout::horizontal([Constraint::Length(34),
+        Constraint::Fill(1)])
+        .spacing(0)
+        .areas(message_area);
+
+    let ascii_art = r#"⢰⣷⢶⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡴⠶⢶⣆
+⢺⣿⣶⡎⠙⠿⣦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠞⠁⠀⠀⠠⡟
+⠈⣿⣿⣷⣄⠄⠈⢻⣷⣦⣤⡄⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠟⠁⠀⠀⠀⠀⣼⠁
+⠀⢸⣿⣿⣿⣠⣤⣤⣿⡟⠉⠀⠀⠀⠀⠀⠀⠈⠙⠛⠿⠷⣶⣶⣄⠀⠀⣰⠇⠀
+⠀⠀⢻⣿⡟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣃⢰⠏⠀⠀
+⠀⠀⣼⣿⠇⠀⢠⡀⠀⠀⠀⣀⣴⡇⠀⠀⢀⣴⣤⠀⠀⠀⠀⠀⠈⣿⡿⠀⠀⠀
+⠀⠀⠉⠀⣀⣠⣾⣿⣷⣴⣿⣿⣿⡿⠀⠀⢿⣿⣿⣷⣶⣤⡀⠀⠀⠈⠃⠀⠀⠀
+⠀⠀⠀⠀⢿⣿⣏⠉⢹⠛⢿⣿⣿⠁⠀⠀⢸⣿⡿⢿⠿⢿⣷⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠈⢿⣿⣦⣤⣤⣿⣿⠇⠀⠀⠀⠸⣿⣄⣘⣀⣸⣿⠂⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠈⠛⠻⡿⠿⣿⠟⠀⠀⠀⠀⠀⠹⣿⣿⣿⡿⠿⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠓⠦⣀⠔⠊⠀⠘⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠤⠾⠤⢤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠀⠀⠀⠀⠀⠑⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀NO⠀⠀⠀SPACE⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"#;
+
+    let paragraph = Paragraph::new(ascii_art)
+        .block(base_layout_block("", theme).padding(Padding::ZERO))
+        .style(Style::default().fg(theme.kanji_stroke_old))
+        .alignment(Alignment::Left);
+
+    frame.render_widget(paragraph, constraint);
 }
