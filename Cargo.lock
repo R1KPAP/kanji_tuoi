@@ -839,7 +839,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kanji_tui"
+name = "kanji_tuoi"
 version = "0.1.0"
 dependencies = [
  "anyhow",

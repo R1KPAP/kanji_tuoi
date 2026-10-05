@@ -1,11 +1,11 @@
 [package]
-name = "kanji_tui"
+name = "kanji_tuoi"
 version = "0.1.0"
 edition = "2024"
-description = "TUI app to display KANJI"
+description = "TUI app to display KANJI information"
 license = "MIT"
 authors = ["Riccardo Paparozzi"]
-default-run = "kanji_tui"
+default-run = "kanji_tuoi"
 
 [dependencies]
 bincode = "1.3.3"

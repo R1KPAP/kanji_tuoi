@@ -3,7 +3,7 @@ use crate::model::KanjiData;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::{fs::File, io::BufReader};
+use std::io::{BufReader, Cursor};
 
 //Indexes for fast searches
 pub struct Indexes {
@@ -248,8 +248,9 @@ impl KanjiRepo for InMemoryJson {
 
 fn load_dataset()
 -> Result<Vec<KanjiData>, Box<dyn std::error::Error>> {
-    let file = File::open("data/kanji_dataset.bin")?;
-    let reader = BufReader::new(file);
+    static DATASET_BYTES: &[u8] = include_bytes!("../../data/kanji_dataset.bin");
+    let cursor = Cursor::new(DATASET_BYTES);
+    let reader = BufReader::new(cursor);
     let dataset: Vec<KanjiData> = bincode::deserialize_from(reader)?;
     Ok(dataset)
 }

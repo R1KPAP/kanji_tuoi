@@ -1,6 +1,6 @@
-use kanji_tui::app::App;
+use kanji_tuoi::app::App;
 use std::io;
-use kanji_tui::repo::InMemoryJson;
+use kanji_tuoi::repo::InMemoryJson;
 
 /// App entry point
 fn main() -> io::Result<()> {

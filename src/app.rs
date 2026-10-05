@@ -40,6 +40,25 @@ pub enum ScrollElem {
     None,
 }
 
+#[derive(Debug, Clone)]
+pub enum GlyphMode {
+    Braille,
+    Sextant,
+    Octant,
+    HalfBlock,
+}
+
+impl GlyphMode {
+    pub fn next(&self) -> Self {
+        match self {
+            GlyphMode::Braille => GlyphMode::Sextant,
+            GlyphMode::Sextant => GlyphMode::Octant,
+            GlyphMode::Octant => GlyphMode::HalfBlock,
+            GlyphMode::HalfBlock => GlyphMode::Braille,
+        }
+    }
+}
+
 pub struct ScrollStates {
     pub curr_selected: ScrollElem,
     pub rad_offset: u16,
@@ -74,6 +93,8 @@ pub struct App<'a> {
     pub selected_theme: ThemeMode,
     pub scroll_states: ScrollStates,
     pub is_anomaly: bool,
+    pub is_thicky: bool,
+    pub glyph_mode: GlyphMode,
 
     pub compounds_state: ListState,
     pub anim_state: KanjiAnimState,
@@ -100,6 +121,8 @@ impl<'a> App<'a> {
             selected_theme: ThemeMode::Original,
             scroll_states: ScrollStates::default(),
             is_anomaly: false,
+            is_thicky: false,
+            glyph_mode: GlyphMode::Braille,
         }
     }
 
@@ -121,6 +144,14 @@ impl<'a> App<'a> {
 
     fn switch_theme(&mut self) {
         self.selected_theme = ThemeMode::toggle(self.selected_theme)
+    }
+
+    fn switch_thicky(&mut self) {
+        self.is_thicky = !self.is_thicky;
+    }
+
+    fn change_glyph(&mut self) {
+        self.glyph_mode = self.glyph_mode.next();
     }
 
     fn current_kanji(&self) -> Option<&KanjiData> {
@@ -257,6 +288,14 @@ impl<'a> App<'a> {
         }
     }
 
+    fn to_last_stroke(&mut self) {
+        if let Some(kanji) = self.current_kanji() {
+            let total_strokes = kanji.strokes.len();
+            self.anim_state.current_stroke = total_strokes;
+            self.anim_state.is_finished = true;
+        }
+    }
+
     fn to_next_stroke(&mut self) {
         if let Some(kanji) = self.current_kanji() {
             let total_strokes = kanji.strokes.len();
@@ -273,13 +312,29 @@ impl<'a> App<'a> {
     }
 
     fn to_prev_stroke(&mut self) {
-        if let Some(kanji) = self.current_kanji() {
-            if kanji.strokes.is_empty() || self.anim_state.current_stroke == 0 {
+        let total_strokes = {
+            let kanji = match self.current_kanji() {
+                Some(k) => k,
+                None => return,
+            };
+            if kanji.strokes.is_empty() {
                 return;
             }
-            let prev_idx = self.anim_state.current_stroke.saturating_sub(1);
-            self.anim_state.play_stroke(prev_idx);
+            kanji.strokes.len()
+        };
+        if self.anim_state.is_finished {
+            self.anim_state.is_finished = false;
+            let target = total_strokes.saturating_sub(1);
+            self.anim_state.play_stroke(target);
+            return;
         }
+
+        if self.anim_state.current_stroke == 0 {
+            return;
+        }
+
+        let prev_idx = self.anim_state.current_stroke.saturating_sub(1);
+        self.anim_state.play_stroke(prev_idx);
     }
 
     //Draws the UI
@@ -329,14 +384,9 @@ impl<'a> App<'a> {
 
             match self.active_popup {
                 ActivePopup::Help => {
-                    let used_height = if layout.layout_type == LayoutType::Horizontal {
-                        layout.canvas.height + layout.details.height
-                    } else {
-                        (layout.canvas.height * 2) + layout.details.height
-                    };
                     render_help_popup(
                         frame,
-                        used_height,
+                        &layout.content_area,
                         current_theme,
                         layout.layout_type,
                         &mut self.scroll_states,
@@ -344,14 +394,9 @@ impl<'a> App<'a> {
                 }
                 ActivePopup::Search => {
                     if let Some(search_form) = &self.search_form {
-                        let used_height = if layout.layout_type == LayoutType::Horizontal {
-                            layout.canvas.height + layout.details.height
-                        } else {
-                            (layout.canvas.height * 2) + layout.details.height
-                        };
                         render_search_form(
                             frame,
-                            used_height,
+                            &layout.content_area,
                             search_form,
                             current_theme,
                             layout.layout_type,
@@ -360,37 +405,21 @@ impl<'a> App<'a> {
                 }
                 ActivePopup::SearchRad => {
                     if let Some(search_form) = &mut self.search_form {
-                        let used_height = if layout.layout_type == LayoutType::Horizontal {
-                            layout.canvas.height + layout.details.height
-                        } else {
-                            (layout.canvas.height * 2) + layout.details.height
-                        };
                         render_search_rad_form(
                             frame,
-                            used_height,
+                            &layout.content_area,
                             search_form,
                             current_theme,
-                            layout.layout_type,
                         );
                     }
                 }
                 ActivePopup::History => {
-                    let used_height = if layout.layout_type == LayoutType::Horizontal {
-                        layout.canvas.height + layout.details.height
-                    } else {
-                        (layout.canvas.height * 2) + layout.details.height
-                    };
-                    render_history_popup(frame, &self.jump_history, used_height, current_theme);
+                    render_history_popup(frame, &self.jump_history, &layout.content_area, current_theme);
                 }
                 ActivePopup::Mapping => {
-                    let used_height = if layout.layout_type == LayoutType::Horizontal {
-                        layout.canvas.height + layout.details.height
-                    } else {
-                        (layout.canvas.height * 2) + layout.details.height
-                    };
                     render_keys_popup(
                         frame,
-                        used_height,
+                        &layout.content_area,
                         current_theme,
                         layout.layout_type,
                         &mut self.scroll_states,
@@ -498,7 +527,7 @@ impl<'a> App<'a> {
                         self.active_search = SearchCriteria::default();
                         self.search_results = self.repo.search(&SearchCriteria::default());
                     }
-                    _ => {},
+                    _ => {}
                 }
             } else {
                 match key.code {
@@ -590,7 +619,7 @@ impl<'a> App<'a> {
                             _ => ActivePopup::Help,
                         };
                     }
-                    KeyCode::Char('e') => self.anim_state.is_finished = true,
+                    KeyCode::Char('e') => self.to_last_stroke(),
                     KeyCode::Char('k') => {
                         self.scroll_states.reset();
                         self.active_popup = match self.active_popup {
@@ -620,6 +649,8 @@ impl<'a> App<'a> {
                     }
                     KeyCode::Char('o') => self.anim_state.reset(),
                     KeyCode::Char('t') => self.switch_theme(),
+                    KeyCode::Char('b') => self.switch_thicky(),
+                    KeyCode::Char('m') => self.change_glyph(),
                     KeyCode::Up => self.to_next_stroke(),
                     KeyCode::Down => self.to_prev_stroke(),
                     KeyCode::Left => {

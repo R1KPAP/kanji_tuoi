@@ -250,7 +250,7 @@ impl SearchForm {
             SearchField::Radical(idx) => {
                 SearchField::Radical((idx + self.max_colums).min(KANGXI_RADICALS.len() - 1))
             }
-            SearchField::Jlpt(idx) => SearchField::Grade(idx.min(8)),
+            SearchField::Jlpt(_) => SearchField::Grade(0),
             SearchField::Grade(_) => SearchField::Strokes(RangeSubfield::Min),
             SearchField::Strokes(_) => SearchField::Rank(RangeSubfield::Min),
             SearchField::Rank(_) => SearchField::Query,

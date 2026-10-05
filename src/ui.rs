@@ -1,4 +1,4 @@
-use crate::app::{App, JumpElement, ScrollStates};
+use crate::app::{App, GlyphMode, JumpElement, ScrollStates};
 use crate::app::{History, Theme};
 use crate::app::{ScrollElem, search::*};
 use crate::constants::KANGXI_RADICALS;
@@ -35,6 +35,7 @@ pub struct MainLayout {
     pub stats: Rect,
     pub details: Rect,
     pub used_in: Rect,
+    pub content_area: Rect,
     pub layout_type: LayoutType,
 }
 
@@ -43,8 +44,10 @@ pub fn define_layout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainLa
     let kanji_width = (top_height.saturating_sub(2) * 2) + 2;
     let stats_width = 24;
 
-    if (area.height < 24 && area.width < 68) || (area.height < 16 && area.width > 68)
-    || area.width < kanji_width + stats_width {
+    if (area.height < 26 && area.width < 68)
+        || (area.height < 16 && area.width > 68)
+        || area.width < kanji_width + stats_width
+    {
         None
     } else if area.width >= 68 {
         define_hlayout(area, cur_kanji)
@@ -59,25 +62,39 @@ pub fn define_hlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainL
         .unwrap_or(12);
 
     let [kanji_section, details_section] =
-        Layout::vertical([Constraint::Length(10),
-             Constraint::Length(details_height)])
+        Layout::vertical([Constraint::Length(10), Constraint::Length(details_height)])
             .spacing(0)
             .areas(area);
 
     let top_height = kanji_section.height;
     let kanji_width = (top_height.saturating_sub(2) * 2) + 2;
 
-    let [canvas, stats, radical] = Layout::horizontal([
+    let [canvas, stats, radical, _] = Layout::horizontal([
         Constraint::Length(kanji_width),
         Constraint::Max(29),
+        Constraint::Max(65),
         Constraint::Fill(1),
     ])
     .spacing(0)
     .areas(kanji_section);
 
+    let [left, _spacer] = Layout::horizontal([
+        Constraint::Length(kanji_width + 29 + 65),
+        Constraint::Fill(1),
+    ])
+    .spacing(0)
+    .areas(details_section);
+
     let [details, used_in] = Layout::horizontal([Constraint::Percentage(65), Constraint::Fill(35)])
         .spacing(0)
-        .areas(details_section);
+        .areas(left);
+
+    let content_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.min(kanji_width + 29 + 65),
+        height: (10 + details_height).min(area.height),
+    };
 
     Some(MainLayout {
         canvas,
@@ -85,6 +102,7 @@ pub fn define_hlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainL
         stats,
         details,
         used_in,
+        content_area,
         layout_type: LayoutType::Horizontal,
     })
 }
@@ -115,12 +133,20 @@ pub fn define_vlayout(area: Rect, cur_kanji: Option<&KanjiData>) -> Option<MainL
         .spacing(0)
         .areas(details_section);
 
+    let content_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: (16 + details_height).min(area.height),
+    };
+
     Some(MainLayout {
         canvas,
         radical,
         stats,
         details,
         used_in,
+        content_area,
         layout_type: LayoutType::Vertical,
     })
 }
@@ -176,12 +202,19 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
     let [canvas_area, footer_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner_area);
 
+    let marker = match app.glyph_mode {
+        GlyphMode::Braille => Marker::Braille,
+        GlyphMode::HalfBlock => Marker::HalfBlock,
+        GlyphMode::Sextant => Marker::Sextant,
+        GlyphMode::Octant => Marker::Octant,
+    };
+
     let canvas_widget = Canvas::default()
         .background_color(current_theme.bg)
         .x_bounds([8.0, 101.0])
         .y_bounds([8.0, 101.0])
-        .marker(Marker::Braille)
-        .paint(|ctx| {
+        .marker(marker)
+        .paint(|ctx: &mut Context<'_>| {
             if app.anim_state.is_finished {
                 for stroke in &kanji.strokes {
                     draw_stroke_points(
@@ -189,6 +222,7 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
                         &stroke.strokes,
                         stroke.strokes.len(),
                         current_theme.kanji_stroke_old,
+                        app.is_thicky,
                     );
                 }
             } else {
@@ -201,6 +235,7 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
                         &stroke.strokes,
                         stroke.strokes.len(),
                         current_theme.kanji_stroke_old,
+                        app.is_thicky,
                     );
                 }
 
@@ -218,6 +253,7 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
                         &current_stroke.strokes,
                         points_to_draw,
                         current_theme.kanji_stroke_new,
+                        app.is_thicky,
                     );
                 }
             }
@@ -225,11 +261,7 @@ pub fn render_kanji_canvas(frame: &mut Frame, area: Rect, kanji: &KanjiData, app
 
     frame.render_widget(canvas_widget, canvas_area);
 
-    let display_stroke = if app.anim_state.current_point == 0 && app.anim_state.current_stroke > 0 {
-        app.anim_state.current_stroke
-    } else {
-        (app.anim_state.current_stroke + 1).min(kanji.strokes.len())
-    };
+    let display_stroke = (app.anim_state.current_stroke + 1).min(kanji.strokes.len());
     let title = format!("{}/{}", app.current_kanji + 1, tot_kanji);
     let footer_content = if app.anim_state.is_finished {
         format!("{} {}", kanji.kanji, title)
@@ -662,28 +694,49 @@ pub fn append_list_item(
     }
 }
 
-pub fn draw_stroke_points(ctx: &mut Context, points: &[MyPoint], max_points: usize, color: Color) {
+pub fn draw_stroke_points(
+    ctx: &mut Context,
+    points: &[MyPoint],
+    max_points: usize,
+    color: Color,
+    is_thicky: bool,
+) {
     if points.len() < 2 {
         return;
     }
 
     let limit = max_points.min(points.len());
+
+    let offsets: &[(f64, f64)] = if is_thicky {
+        &[(0.0, 0.0), (0.6, 0.0), (0.0, 0.6), (-0.6, 0.0), (0.0, -0.6)]
+    } else {
+        &[(0.0, 0.0)]
+    };
+
     for i in 0..limit.saturating_sub(1) {
         let p1 = &points[i];
         let p2 = &points[i + 1];
-        ctx.draw(&Line {
-            x1: p1.x as f64,
-            y1: 109.0 - p1.y as f64,
-            x2: p2.x as f64,
-            y2: 109.0 - p2.y as f64,
-            color: color,
-        });
+
+        let x1 = p1.x as f64;
+        let y1 = 109.0 - p1.y as f64;
+        let x2 = p2.x as f64;
+        let y2 = 109.0 - p2.y as f64;
+
+        for &(dx, dy) in offsets {
+            ctx.draw(&Line {
+                x1: x1 + dx,
+                y1: y1 + dy,
+                x2: x2 + dx,
+                y2: y2 + dy,
+                color,
+            });
+        }
     }
 }
 
 pub fn render_help_popup(
     frame: &mut Frame,
-    used_height: u16,
+    content_area: &Rect,
     theme: &Theme,
     layout: LayoutType,
     scroll_state: &mut ScrollStates,
@@ -694,7 +747,7 @@ pub fn render_help_popup(
         (94, 92)
     };
 
-    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
+    let popup_area = centered_rect(x_percent, y_percent, *content_area, content_area.height);
     let max_width = (popup_area.width as usize).saturating_sub(4);
 
     frame.render_widget(Clear, popup_area);
@@ -789,7 +842,7 @@ pub fn render_help_popup(
 
 pub fn render_keys_popup(
     frame: &mut Frame,
-    used_height: u16,
+    content_area: &Rect,
     theme: &Theme,
     layout: LayoutType,
     scroll_state: &mut ScrollStates,
@@ -800,7 +853,7 @@ pub fn render_keys_popup(
         (95, 96)
     };
 
-    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
+    let popup_area = centered_rect(x_percent, y_percent, *content_area, content_area.height);
 
     let [left, right] = Layout::horizontal([Constraint::Percentage(53), Constraint::Fill(47)])
         .spacing(0)
@@ -838,6 +891,8 @@ pub fn render_keys_popup(
         "e: end strokes animation",
         "p: pause/resume strokes animation",
         "t: switch theme Original/Cyberpunk",
+        "b: switch to pseudo bold mode",
+        "m: switch to the next glyph",
         "q: quit the app",
         "r: jump to current kanji's radical",
         "Tab: switch between compunds and used in selection",
@@ -902,52 +957,24 @@ pub fn render_keys_popup(
 
 pub fn render_search_form(
     frame: &mut Frame,
-    used_height: u16,
+    content_area: &Rect,
     form: &SearchForm,
     theme: &Theme,
-    layout: LayoutType,
+    _layout: LayoutType,
 ) {
-    let (x_percent, y_percent, chunk_size) = if layout == LayoutType::Horizontal {
-        (62, 48, 2)
-    } else {
-        (79, 48, 3)
-    };
-    let popup_area = centered_rect(x_percent, y_percent, frame.area(), used_height);
-    frame.render_widget(Clear, popup_area);
+    let popup_width = 68.min(content_area.width.saturating_sub(4)).max(35);
+    let inner_area_width = popup_width.saturating_sub(2) as usize;
 
-    let popup_block = Block::default()
-        .style(Style::default().bg(theme.bg))
-        .title("Filters")
-        .title_style(Style::default().fg(theme.btitle))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-
-    let inner_area = popup_block.inner(popup_area);
-    frame.render_widget(popup_block, popup_area);
-
-    let chunks = Layout::vertical([
-        Constraint::Length(chunk_size), // JLPT
-        Constraint::Length(chunk_size), // Grade
-        Constraint::Length(2),          // Strokes
-        Constraint::Length(2),          // Rank
-        Constraint::Length(1),          // Query
-    ])
-    .split(inner_area);
-
-    //JLPT
-    let mut jlpt_spans = vec![Span::styled(
-        " JLPT Level: ",
-        Style::default().fg(theme.rtext),
-    )];
-    let jlpt_items: Vec<Span> = (1..=6)
+    // --- JLPT ---
+    let jlpt_prefix = Span::styled(" JLPT Level: ", Style::default().fg(theme.rtext));
+    let jlpt_pairs: Vec<(Span, Option<Span>)> = (1..=6)
         .enumerate()
-        .flat_map(|(idx, n)| {
+        .map(|(idx, n)| {
             let is_selected = form
                 .draft
                 .jlpt
                 .as_ref()
                 .map_or(false, |set| set.contains(&JlptLevel::N(n)));
-
             let is_focused = form.active_field == SearchField::Jlpt(idx);
 
             let style = match (is_focused, is_selected) {
@@ -972,41 +999,26 @@ pub fn render_search_form(
             } else {
                 format!("{label}")
             };
-
             let span = Span::styled(text, style);
-            if n < 6 {
-                vec![span, Span::styled(" | ", Style::default().fg(theme.rtext))]
+
+            let sep = if n < 6 {
+                Some(Span::styled(" | ", Style::default().fg(theme.rtext)))
             } else {
-                vec![span]
-            }
+                None
+            };
+
+            (span, sep)
         })
         .collect();
 
-    if layout == LayoutType::Horizontal {
-        jlpt_spans.extend(jlpt_items);
-        let jlpt_widget = Paragraph::new(TLine::from(jlpt_spans));
-        frame.render_widget(jlpt_widget, chunks[0]);
-    } else {
-        let split_idx = 9;
-        let mut jlpt_line1_spans = jlpt_spans.clone();
-        jlpt_line1_spans.extend(jlpt_items[..split_idx].iter().cloned());
+    let (jlpt_widget, jlpt_height) =
+        build_wrapped_paragraph(jlpt_prefix, jlpt_pairs, inner_area_width);
 
-        let mut jlpt_line2_spans = vec![Span::styled("             ", Style::default())];
-        jlpt_line2_spans.extend(jlpt_items[split_idx..].iter().cloned());
-
-        let jlpt_widget = Paragraph::new(vec![
-            TLine::from(jlpt_line1_spans),
-            TLine::from(jlpt_line2_spans),
-        ]);
-        frame.render_widget(jlpt_widget, chunks[0]);
-    };
-
-    //Grade
-    let mut grade_spans = vec![Span::styled(" Grade: ", Style::default().fg(theme.rtext))];
-
-    let grade_items: Vec<Span> = KanjiGrade::descs()
+    // --- Grade ---
+    let grade_prefix = Span::styled(" Grade: ", Style::default().fg(theme.rtext));
+    let grade_pairs: Vec<(Span, Option<Span>)> = KanjiGrade::descs()
         .into_iter()
-        .flat_map(|(r, d, idx)| {
+        .map(|(r, d, idx)| {
             let is_focused = form.active_field == SearchField::Grade(*idx);
             let is_selected = form
                 .draft
@@ -1031,37 +1043,22 @@ pub fn render_search_form(
             } else {
                 format!("{d}")
             };
-
             let span = Span::styled(text, style);
-            if (*idx as u8) < 8 {
-                vec![span, Span::styled(" | ", Style::default().fg(theme.rtext))]
+
+            let sep = if (*idx as u8) < 8 {
+                Some(Span::styled(" | ", Style::default().fg(theme.rtext)))
             } else {
-                vec![span]
-            }
+                None
+            };
+
+            (span, sep)
         })
         .collect();
 
-    if layout == LayoutType::Horizontal {
-        grade_spans.extend(grade_items);
+    let (grade_widget, grade_height) =
+        build_wrapped_paragraph(grade_prefix, grade_pairs, inner_area_width);
 
-        let grade_widget = Paragraph::new(TLine::from(grade_spans));
-        frame.render_widget(grade_widget, chunks[1]);
-    } else {
-        let split_idx = 11;
-        let mut grade_line1_spans = grade_spans.clone();
-        grade_line1_spans.extend(grade_items[..split_idx].iter().cloned());
-
-        let mut grade_line2_spans = vec![Span::styled("        ", Style::default())];
-        grade_line2_spans.extend(grade_items[split_idx..].iter().cloned());
-
-        let grade_widget = Paragraph::new(vec![
-            TLine::from(grade_line1_spans),
-            TLine::from(grade_line2_spans),
-        ]);
-        frame.render_widget(grade_widget, chunks[1]);
-    };
-
-    //Strokes
+    // --- Strokes ---
     let (min_stroke, max_stroke) = format_range(form.draft.strokes.as_ref());
     let stroke_prefix = " Number of strokes: ";
     let stroke_widget = Paragraph::new(TLine::from(vec![
@@ -1077,9 +1074,8 @@ pub fn render_search_form(
             Style::default().fg(theme.kanji_stroke_old),
         ),
     ]));
-    frame.render_widget(stroke_widget, chunks[2]);
 
-    //Rank
+    // --- Rank ---
     let (min_rank, max_rank) = format_range(form.draft.rank.as_ref());
     let rank_prefix = " Rank: ";
     let rank_widget = Paragraph::new(TLine::from(vec![
@@ -1095,33 +1091,78 @@ pub fn render_search_form(
             Style::default().fg(theme.kanji_stroke_old),
         ),
     ]));
-    frame.render_widget(rank_widget, chunks[3]);
 
-    //Text
+    // --- Text Query ---
     let query_prefix = " Textual search: ";
     let query_text = form.draft.query_text.as_deref().unwrap_or("_");
     let text_widget = Paragraph::new(TLine::from(vec![
         Span::styled(query_prefix, Style::default().fg(theme.rtext)),
         Span::styled(query_text, Style::default().fg(theme.kanji_stroke_old)),
     ]));
-    frame.render_widget(text_widget, chunks[4]);
+
+    let total_content_height = jlpt_height + grade_height + 4 + 1 + 1 + 1;
+    let popup_height = total_content_height + 2;
+
+    let vertical_layout = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(popup_height),
+        Constraint::Fill(1),
+    ])
+    .split(*content_area);
+
+    let popup_area = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(popup_width),
+        Constraint::Fill(1),
+    ])
+    .split(vertical_layout[1])[1];
+
+    frame.render_widget(Clear, popup_area);
+
+    let popup_block = Block::default()
+        .style(Style::default().bg(theme.bg))
+        .title("Filters")
+        .title_style(Style::default().fg(theme.btitle))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner_area = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(jlpt_height),  // 0: JLPT
+        Constraint::Length(1),            // 1: Separator
+        Constraint::Length(grade_height), // 2: Grade
+        Constraint::Length(1),            // 3: Separator
+        Constraint::Length(1),            // 4: Strokes
+        Constraint::Length(1),            // 5: Separator
+        Constraint::Length(1),            // 6: Rank
+        Constraint::Length(1),            // 7: Separator
+        Constraint::Length(1),            // 8: Query
+    ])
+    .split(inner_area);
+
+    frame.render_widget(jlpt_widget, chunks[0]);
+    frame.render_widget(grade_widget, chunks[2]);
+    frame.render_widget(stroke_widget, chunks[4]);
+    frame.render_widget(rank_widget, chunks[6]);
+    frame.render_widget(text_widget, chunks[8]);
 
     let label_width = 4;
-
     let (prefix_len, chunk) = match form.active_field {
         SearchField::Strokes(RangeSubfield::Min) => {
-            (stroke_prefix.len() + label_width, Some(chunks[2]))
+            (stroke_prefix.len() + label_width, Some(chunks[4]))
         }
         SearchField::Strokes(RangeSubfield::Max) => (
             stroke_prefix.len() + 2 * label_width + 1 + min_stroke.to_string().len(),
-            Some(chunks[2]),
+            Some(chunks[4]),
         ),
-        SearchField::Rank(RangeSubfield::Min) => (rank_prefix.len() + label_width, Some(chunks[3])),
+        SearchField::Rank(RangeSubfield::Min) => (rank_prefix.len() + label_width, Some(chunks[5])),
         SearchField::Rank(RangeSubfield::Max) => (
             rank_prefix.len() + 2 * label_width + 1 + min_rank.to_string().len(),
-            Some(chunks[3]),
+            Some(chunks[5]),
         ),
-        SearchField::Query => (query_prefix.len(), Some(chunks[4])),
+        SearchField::Query => (query_prefix.len(), Some(chunks[6])),
         _ => (0, None),
     };
 
@@ -1137,44 +1178,62 @@ pub fn render_search_form(
     }
 }
 
+fn build_wrapped_paragraph<'a>(
+    prefix: Span<'a>,
+    items: Vec<(Span<'a>, Option<Span<'a>>)>,
+    max_w: usize,
+) -> (Paragraph<'a>, u16) {
+    let mut lines: Vec<TLine> = Vec::new();
+    let mut current_line_spans = vec![prefix.clone()];
+    let prefix_len = prefix.content.chars().count();
+    let mut current_width = prefix_len;
+
+    let indent_span = Span::styled("  ", Style::default());
+    let indent_width = 2;
+
+    for (item_span, sep_span) in items {
+        let item_len = item_span.content.chars().count();
+        let sep_len = sep_span.as_ref().map_or(0, |s| s.content.chars().count());
+        let total_item_len = item_len + sep_len;
+
+        if current_width + total_item_len > max_w && current_width > prefix_len {
+            lines.push(TLine::from(current_line_spans));
+            current_line_spans = vec![indent_span.clone(), item_span];
+            current_width = indent_width + item_len;
+        } else {
+            current_line_spans.push(item_span);
+            current_width += item_len;
+        }
+
+        if let Some(sep) = sep_span {
+            current_line_spans.push(sep);
+            current_width += sep_len;
+        }
+    }
+
+    if !current_line_spans.is_empty() {
+        lines.push(TLine::from(current_line_spans));
+    }
+
+    let height = lines.len() as u16;
+    (Paragraph::new(lines), height.max(1))
+}
+
 pub fn render_search_rad_form(
     frame: &mut Frame,
-    used_height: u16,
+    content_area: &Rect,
     form: &mut SearchForm,
     theme: &Theme,
-    layout: LayoutType,
 ) {
-    let y_percent = if layout == LayoutType::Horizontal {
-        58
-    } else {
-        79
-    };
-    let popup_area = centered_rect(91, y_percent, frame.area(), used_height);
-    frame.render_widget(Clear, popup_area);
+    let cell_width: u16 = 4;
 
-    let popup_block = Block::default()
-        .padding(Padding::ZERO)
-        .style(Style::default().bg(theme.bg))
-        .title_style(Style::default().fg(theme.btitle))
-        .title("Radical filter")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-
-    let inner_area = popup_block.inner(popup_area);
-    frame.render_widget(popup_block, popup_area);
+    let popup_width = ((content_area.width * 96) / 100).clamp(20, content_area.width);
+    let inner_target_width = popup_width.saturating_sub(2);
+    let max_columns = ((inner_target_width / cell_width) as usize).max(1);
+    form.max_colums = max_columns;
 
     let mut lines: Vec<TLine> = Vec::new();
     let mut current_spans: Vec<Span> = Vec::new();
-
-    let cell_width: u16 = 4;
-    let max_columns = ((inner_area.width / cell_width) as usize).max(1);
-    let grid_width = (max_columns as u16) * cell_width;
-
-    form.max_colums = max_columns;
-
-    let total_items = KANGXI_RADICALS.len();
-    let num_rows = total_items.div_ceil(max_columns);
-    let grid_height = num_rows as u16;
 
     for (idx, radical) in KANGXI_RADICALS.iter().enumerate() {
         let is_selected = form
@@ -1198,46 +1257,58 @@ pub fn render_search_rad_form(
         };
 
         let text = format!(" {} ", radical);
-
         current_spans.push(Span::styled(text, style));
 
-        if (idx + 1) % max_columns as usize == 0 || idx + 1 == KANGXI_RADICALS.len() {
+        if (idx + 1) % max_columns == 0 || idx + 1 == KANGXI_RADICALS.len() {
             lines.push(TLine::from(current_spans.clone()));
             current_spans.clear();
         }
     }
 
-    let grid_paragraph = Paragraph::new(lines);
+    let popup_height = (lines.len() as u16) + 2;
 
-    let vertical_chunks =
-        Layout::vertical([Constraint::Length(grid_height.min(inner_area.height))])
-            .split(inner_area);
-
-    let grid_area = Layout::horizontal([
+    let vertical_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(grid_width.min(inner_area.width)),
+        Constraint::Length(popup_height),
         Constraint::Fill(1),
     ])
-    .split(vertical_chunks[0])[1];
+    .split(*content_area);
 
-    frame.render_widget(grid_paragraph, grid_area);
+    let popup_area = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(popup_width),
+        Constraint::Fill(1),
+    ])
+    .split(vertical_layout[1])[1];
+
+    frame.render_widget(Clear, popup_area);
+
+    let popup_block = Block::default()
+        .padding(Padding::ZERO)
+        .style(Style::default().bg(theme.bg))
+        .title_style(Style::default().fg(theme.btitle))
+        .title("Radical Filter")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner_area = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let grid_paragraph = Paragraph::new(lines);
+    frame.render_widget(grid_paragraph, inner_area);
 }
 
-pub fn render_no_kanji(frame: &mut Frame, theme: &Theme) {
-    let paragraph = Paragraph::new("NO_RESULT")
-        .style(Style::default().fg(theme.kanji_stroke_old))
-        .alignment(Alignment::Center)
-        .block(base_layout_block("", theme).padding(Padding::uniform(0)));
-
-    frame.render_widget(paragraph, frame.area());
-}
-
-pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u16, theme: &Theme) {
+pub fn render_history_popup(
+    frame: &mut Frame,
+    history: &History,
+    content_area: &Rect,
+    theme: &Theme,
+) {
     let target_area: Rect = Rect {
-        x: frame.area().x,
-        y: frame.area().y,
-        width: frame.area().width,
-        height: frame.area().height.min(used_height),
+        x: content_area.x,
+        y: content_area.y,
+        width: content_area.width,
+        height: content_area.height,
     };
 
     let [_, history_area, title_area] = Layout::horizontal([
@@ -1248,7 +1319,7 @@ pub fn render_history_popup(frame: &mut Frame, history: &History, used_height: u
     .areas(target_area);
 
     for (i, char) in " Jump History ".chars().enumerate() {
-        let char_y = title_area.y + (used_height / 2 - 7) + i as u16;
+        let char_y = title_area.y + (content_area.height / 2 - 7) + i as u16;
         if char_y >= title_area.height {
             break;
         }
@@ -1413,12 +1484,10 @@ pub fn render_no_results(frame: &mut Frame, theme: &Theme) {
 pub fn render_too_small(frame: &mut Frame, theme: &Theme) {
     let area = frame.area();
 
-    let [message_area, _] = Layout::vertical([Constraint::Length(12),
-        Constraint::Fill(1)])
+    let [message_area, _] = Layout::vertical([Constraint::Length(12), Constraint::Fill(1)])
         .spacing(0)
         .areas(area);
-    let [constraint, _] = Layout::horizontal([Constraint::Length(34),
-        Constraint::Fill(1)])
+    let [constraint, _] = Layout::horizontal([Constraint::Length(34), Constraint::Fill(1)])
         .spacing(0)
         .areas(message_area);
 

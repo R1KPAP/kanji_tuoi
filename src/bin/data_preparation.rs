@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use encoding_rs::EUC_JP;
-use kanji_tui::model::{KanjiData, KanjiStrokes, MyPoint};
+use kanji_tuoi::model::{KanjiData, KanjiStrokes, MyPoint};
 use lyon_geom::cubic_bezier::CubicBezierSegment;
 use lyon_geom::point;
 use quick_xml::events::Event;
@@ -293,13 +293,14 @@ fn enrich_dataset(
             })
             .unwrap_or_default();
 
-        if let Ok(kanji_strokes) = extract_kanji_svg("assets/kanji_svg", &kanji_data.kanji, 0.5) {
+        if let Ok(kanji_strokes) = extract_kanji_svg("assets/kanji_svg", &kanji_data.kanji, 0.3) {
             kanji_data.strokes = kanji_strokes;
         }
     });
 }
 
 //Extract coords for kanji strokes animation
+//tolerance parameter guide the bazier curve approximation: 0.1 strict to 1.0 relaxed approximation
 pub fn extract_kanji_svg(
     svg_dir_path: &str,
     kanji_name: &char,
